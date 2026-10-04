@@ -26,7 +26,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends devscripts equivs gettext python3-gi dbus-daemon
-          mk-build-deps --install --remove --tool 'sudo apt-get --yes --no-install-recommends' packaging/debian/control
+          sudo mk-build-deps --install --remove --tool 'apt-get --yes --no-install-recommends' packaging/debian/control
       - name: Run development harness
         run: |
           tools/dev.sh check
