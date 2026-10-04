@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove|purge)
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl stop 'fcitx5-evkey-server@*.service' || true
+        fi
+        if command -v setfacl >/dev/null 2>&1; then
+            for node in /dev/uinput /dev/input/event*; do
+                [ -e "$node" ] || continue
+                setfacl -x u:evkey-input "$node" || true
+            done
+        fi
+        if command -v udevadm >/dev/null 2>&1; then
+            udevadm control --reload-rules || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#

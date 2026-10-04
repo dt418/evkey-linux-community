@@ -1,0 +1,57 @@
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+set(SETTINGS_GUI_INSTALL_DIR "${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/settings-gui")
+set(SETTINGS_GUI_FULL_PATH "${CMAKE_INSTALL_FULL_DATADIR}/${PROJECT_NAME}/settings-gui")
+
+option(EVKEY_BYTECOMPILE_PYTHON "Byte-compile Python scripts during install" ON)
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/version.py.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/version.py"
+    @ONLY
+)
+
+install(DIRECTORY core ui
+        DESTINATION "${SETTINGS_GUI_INSTALL_DIR}"
+        COMPONENT Runtime
+        FILES_MATCHING PATTERN "*.py" PATTERN "*.qss" PATTERN "*.svg")
+
+install(FILES i18n.py "${CMAKE_CURRENT_BINARY_DIR}/version.py"
+        DESTINATION "${SETTINGS_GUI_INSTALL_DIR}"
+        COMPONENT Runtime)
+
+install(FILES main.py
+        DESTINATION "${SETTINGS_GUI_INSTALL_DIR}"
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+        COMPONENT Runtime)
+
+set(LAUNCHER_SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/fcitx5-evkey-settings")
+
+file(WRITE "${LAUNCHER_SCRIPT}"
+"#!/bin/sh
+exec \"${SETTINGS_GUI_FULL_PATH}/main.py\" \"$@\"
+")
+
+install(PROGRAMS "${LAUNCHER_SCRIPT}"
+        DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        COMPONENT Runtime)
+
+if(EVKEY_BYTECOMPILE_PYTHON)
+    install(CODE "
+        message(STATUS \"Byte-compiling Python scripts...\")
+        execute_process(
+            COMMAND \"${Python3_EXECUTABLE}\" -m compileall -q -o 0 -o 1 -d \"${SETTINGS_GUI_FULL_PATH}\"
+                \"\$ENV{DESTDIR}${SETTINGS_GUI_FULL_PATH}\"
+        )
+    " COMPONENT Runtime)
+endif()
+
+fcitx5_translate_desktop_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/org.fcitx.Fcitx5.Addon.Evkey.Settings.desktop.in"
+    org.fcitx.Fcitx5.Addon.Evkey.Settings.desktop
+    DESKTOP
+)
+
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/org.fcitx.Fcitx5.Addon.Evkey.Settings.desktop"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"
+        COMPONENT Runtime)

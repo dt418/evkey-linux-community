@@ -1,0 +1,51 @@
+# Build from a local release source archive. Do not replace these with Lotus URLs.
+: "${EVKEY_SOURCE_ARCHIVE:?Set EVKEY_SOURCE_ARCHIVE to an absolute fcitx5-evkey-1.0.0 source archive path}"
+: "${EVKEY_SOURCE_SHA256:?Set EVKEY_SOURCE_SHA256 to archive SHA256}"
+
+pkgbase=fcitx5-evkey
+pkgname=(fcitx5-evkey fcitx5-evkey-uinput)
+pkgver=1.0.0
+pkgrel=4
+pkgdesc='Vietnamese input method for Fcitx 5'
+arch=(x86_64)
+license=(GPL-3.0-or-later)
+depends=(fcitx5 python-qtpy python-dbus python-pyqt5)
+makedepends=(cmake extra-cmake-modules gcc go libinput systemd python librsvg)
+source=("file://${EVKEY_SOURCE_ARCHIVE}")
+sha256sums=("${EVKEY_SOURCE_SHA256}")
+
+build() {
+  cmake -S "${srcdir}/${pkgbase}-${pkgver}" -B build \
+    -DCMAKE_BUILD_TYPE=None \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DEVKEY_BYTECOMPILE_PYTHON=OFF \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package_fcitx5-evkey() {
+  DESTDIR="${pkgdir}" cmake --install build
+
+  rm -f "${pkgdir}/usr/bin/fcitx5-evkey-server"
+  rm -rf "${pkgdir}/usr/lib/modules-load.d" \
+         "${pkgdir}/usr/lib/systemd" \
+         "${pkgdir}/usr/lib/sysusers.d" \
+         "${pkgdir}/usr/lib/udev"
+}
+
+package_fcitx5-evkey-uinput() {
+  pkgdesc='Optional uinput helper for fcitx5-evkey Smooth mode'
+  depends=("fcitx5-evkey=${pkgver}-${pkgrel}" acl libinput systemd udev)
+  install=fcitx5-evkey-uinput.install
+
+  DESTDIR="${pkgdir}" cmake --install build
+
+  rm -f "${pkgdir}/usr/bin/fcitx5-evkey-settings" \
+        "${pkgdir}/usr/lib/fcitx5/libevkey.so"
+  rm -rf "${pkgdir}/usr/share/applications" \
+         "${pkgdir}/usr/share/fcitx5" \
+         "${pkgdir}/usr/share/fcitx5-evkey" \
+         "${pkgdir}/usr/share/icons" \
+         "${pkgdir}/usr/share/licenses" \
+         "${pkgdir}/usr/share/metainfo"
+}

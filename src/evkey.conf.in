@@ -1,0 +1,6 @@
+[InputMethod]
+Name=EVKey Linux Community
+Icon=fcitx-evkey
+LangCode=vi
+Addon=evkey
+Configurable=True

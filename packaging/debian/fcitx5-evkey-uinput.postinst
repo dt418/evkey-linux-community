@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+    if command -v systemd-sysusers >/dev/null 2>&1; then
+        systemd-sysusers /usr/lib/sysusers.d/evkey-input.conf
+    fi
+    if command -v udevadm >/dev/null 2>&1; then
+        udevadm control --reload-rules || true
+        udevadm trigger --subsystem-match=misc --sysname-match=uinput || true
+        udevadm trigger --subsystem-match=input --sysname-match=event* || true
+    fi
+    echo "Smooth mode can inject keys into this desktop session. Enable only when needed:"
+    echo '  sudo systemctl enable --now fcitx5-evkey-server@$(id -u).service'
+fi
+
+#DEBHELPER#

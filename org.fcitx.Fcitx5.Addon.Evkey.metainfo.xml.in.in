@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component type="addon">
+  <id>org.fcitx.Fcitx5.Addon.Evkey</id>
+  <extends>org.fcitx.Fcitx5</extends>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>EVKey Linux Community</name>
+  <summary>Bản cộng đồng bộ gõ tiếng Việt lấy cảm hứng từ EVKey</summary>
+  <description>
+    <p>Bản cộng đồng lấy cảm hứng từ EVKey; sử dụng Lotus/Bamboo, không phải bản EVKey chính thức.</p>
+  </description>
+  <url type="homepage">https://fcitx-im.org</url>
+  <project_group>Fcitx</project_group>
+  <releases>
+    <release version="@PROJECT_VERSION@" />
+  </releases>
+</component>

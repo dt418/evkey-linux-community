@@ -1,0 +1,8 @@
+# CMake build files
+CMakeFiles/
+Makefile
+cmake_install.cmake
+
+# Generated icon PNGs (rsvg-convert, in-source build)
+icons/hicolor/22x22/
+icons/hicolor/24x24/

@@ -1,0 +1,11 @@
+[Addon]
+Name=EVKey Linux Community
+Category=InputMethod
+Version=@PROJECT_VERSION@
+Enabled=True
+Library=libevkey
+Type=SharedLibrary
+OnDemand=True
+Configurable=True
+[Dependencies]
+0=core:@REQUIRED_FCITX_VERSION@

@@ -1,0 +1,5 @@
+usr/bin/fcitx5-evkey-server
+usr/lib/modules-load.d/fcitx5-evkey.conf
+usr/lib/systemd/system/fcitx5-evkey-server@.service
+usr/lib/sysusers.d/evkey-input.conf
+usr/lib/udev/rules.d/99-evkey-uinput.rules

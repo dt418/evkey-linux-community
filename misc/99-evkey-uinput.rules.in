@@ -1,0 +1,9 @@
+# Optional EVKey uinput helper only. Never grant raw keyboard access.
+KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput"
+ACTION=="add|change", KERNEL=="uinput", SUBSYSTEM=="misc", RUN+="/usr/bin/setfacl -m u:@EVKEY_INPUT_USER@:rw $env{DEVNAME}"
+
+# Pointer monitoring is limited to seat0 devices that udev does not classify as keyboards.
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_SEAT}=="seat0", ENV{ID_INPUT_KEYBOARD}!="1", ENV{ID_INPUT_MOUSE}=="1", RUN+="/usr/bin/setfacl -m u:@EVKEY_INPUT_USER@:r $env{DEVNAME}"
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_SEAT}=="seat0", ENV{ID_INPUT_KEYBOARD}!="1", ENV{ID_INPUT_TOUCHPAD}=="1", RUN+="/usr/bin/setfacl -m u:@EVKEY_INPUT_USER@:r $env{DEVNAME}"
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_SEAT}=="seat0", ENV{ID_INPUT_KEYBOARD}!="1", ENV{ID_INPUT_POINTINGSTICK}=="1", RUN+="/usr/bin/setfacl -m u:@EVKEY_INPUT_USER@:r $env{DEVNAME}"
+ACTION=="add|change", SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_SEAT}=="seat0", ENV{ID_INPUT_KEYBOARD}!="1", ENV{ID_INPUT_TOUCHSCREEN}=="1", RUN+="/usr/bin/setfacl -m u:@EVKEY_INPUT_USER@:r $env{DEVNAME}"

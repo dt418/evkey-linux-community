@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=EVKey Linux Community Settings
+Comment=Bản cộng đồng lấy cảm hứng từ EVKey; sử dụng Lotus/Bamboo, không phải bản EVKey chính thức.
+Exec=fcitx5-evkey-settings
+Icon=fcitx-evkey
+StartupWMClass=org.fcitx.Fcitx5.Addon.Evkey.Settings
+Terminal=false
+Type=Application
+Categories=Settings;DesktopSettings;

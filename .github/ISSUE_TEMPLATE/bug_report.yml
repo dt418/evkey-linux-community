@@ -1,0 +1,51 @@
+name: Báo lỗi
+description: Báo lỗi EVKey Linux Community
+labels: ['bug']
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Mô tả và bước tái hiện
+      description: Không dán nội dung văn bản đã gõ hoặc dữ liệu nhạy cảm.
+      placeholder: |
+        1. Chọn chế độ...
+        2. Gõ dữ liệu thử không nhạy cảm...
+        3. Quan sát...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Phiên bản EVKey Linux Community
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distro và phiên bản
+      placeholder: Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: fcitx5
+    attributes:
+      label: Phiên bản Fcitx5
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Chế độ
+      options:
+        - Preedit
+        - Fake Backspace
+        - Uinput (Smooth)
+        - Khác / không rõ
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log đã loại bỏ dữ liệu cá nhân
+      description: Chỉ gửi log liên quan. Không gửi nội dung clipboard, văn bản đã gõ, token, hoặc thông tin tài khoản.
+      render: shell

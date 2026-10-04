@@ -1,0 +1,25 @@
+post_install() {
+  systemd-sysusers /usr/lib/sysusers.d/evkey-input.conf || true
+  udevadm control --reload-rules || true
+  udevadm trigger --subsystem-match=misc --sysname-match=uinput || true
+  udevadm trigger --subsystem-match=input --sysname-match=event* || true
+  echo 'Smooth mode can inject keys into this desktop session. Enable only when needed:'
+  echo '  sudo systemctl enable --now fcitx5-evkey-server@$(id -u).service'
+}
+
+post_upgrade() {
+  post_install
+}
+
+pre_remove() {
+  systemctl stop 'fcitx5-evkey-server@*.service' || true
+  local node
+  for node in /dev/uinput /dev/input/event*; do
+    [[ -e "$node" ]] || continue
+    setfacl -x u:evkey-input "$node" || true
+  done
+}
+
+post_remove() {
+  udevadm control --reload-rules || true
+}

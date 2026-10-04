@@ -1,0 +1,20 @@
+name: Yêu cầu tính năng
+description: Đề xuất tính năng cho EVKey Linux Community
+labels: ['enhancement']
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Vấn đề cần giải quyết
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Hành vi đề xuất
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Giải pháp thay thế và tác động

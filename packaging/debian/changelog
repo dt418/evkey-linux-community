@@ -1,0 +1,32 @@
+fcitx5-evkey (1.0.0-5) unstable; urgency=medium
+
+  * Keep dynamic Settings scrollbars vertical during Fcitx recovery.
+
+ -- EVKey Linux Community <me@danhthanh.dev>  Mon, 05 Oct 2026 00:20:00 +0700
+
+fcitx5-evkey (1.0.0-4) unstable; urgency=medium
+
+  * Restore Settings tab scrollbars after Fcitx recovery.
+
+ -- EVKey Linux Community <me@danhthanh.dev>  Sun, 04 Oct 2026 23:59:00 +0700
+
+fcitx5-evkey (1.0.0-3) unstable; urgency=medium
+
+  * Hide stale configuration errors immediately after automatic recovery.
+
+ -- EVKey Linux Community <me@danhthanh.dev>  Sun, 04 Oct 2026 23:55:00 +0700
+
+fcitx5-evkey (1.0.0-2) unstable; urgency=medium
+
+  * Ship Settings D-Bus owner recovery, activation verification, and native
+    dialog fixes.
+  * Include read-only runtime-status configuration in the installed addon.
+  * Reload unmodified Settings tabs after automatic reconnection.
+
+ -- EVKey Linux Community <me@danhthanh.dev>  Sun, 04 Oct 2026 23:45:00 +0700
+
+fcitx5-evkey (1.0.0-1) unstable; urgency=medium
+
+  * Initial EVKey Linux Community package split.
+
+ -- EVKey Linux Community <me@danhthanh.dev>  Sun, 04 Oct 2026 01:33:00 +0700

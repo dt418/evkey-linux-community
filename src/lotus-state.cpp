@@ -1,0 +1,1718 @@
+/*
+ * SPDX-FileCopyrightText: 2022-2022 CSSlayer <wengxt@gmail.com>
+ * SPDX-FileCopyrightText: 2025 Võ Ngô Hoàng Thành <thanhpy2009@gmail.com>
+ * SPDX-FileCopyrightText: 2026 Nguyễn Hoàng Kỳ  <nhktmdzhg@gmail.com>
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ */
+#include "lotus-state.h"
+#include "lotus-engine.h"
+#include "lotus-candidates.h"
+#include "lotus-utils.h"
+#include "lotus.h"
+
+#include "bamboo-core.h" // generated cgo header; only included where the bridge is called
+
+#include <cstddef>
+#include <fcitx-utils/log.h>
+#include <fcitx-utils/utf8.h>
+#include <fcitx/candidatelist.h>
+#include <fcitx/inputpanel.h>
+#include <fcitx/menu.h>
+#include <fcitx/userinterface.h>
+
+#include <iterator>
+#include <algorithm>
+#include <string>
+#include <sys/socket.h>
+#include <sys/un.h>
+
+
+namespace fcitx {
+    constexpr int      MAX_SCAN_LENGTH = 15;
+
+    static inline bool isWordBreak(uint32_t ucs4) {
+        // Space, tab, newline, carriage return, null, or punctuation/symbols (: ; < = > ? @)
+        return ucs4 == ' ' || ucs4 == '\t' || ucs4 == '\n' || ucs4 == '\r' || ucs4 == 0 || (ucs4 >= 58 && ucs4 <= 64);
+    }
+
+    LotusState::LotusState(LotusEngine* engine, InputContext* ic)
+        : engine_(engine), ic_(ic), requestedMode_(engine->config().mode.value()), effectiveMode_(engine->config().mode.value()) {
+        setEngine();
+    }
+
+    void LotusState::setEngine() {
+        lotusEngine_.reset();
+
+        if (engine_->config().inputMethod.value() == "Custom") {
+            const auto&        keymaps = *engine_->customKeymap().customKeymap;
+            std::vector<char*> charArray;
+            charArray.reserve((keymaps.size() * 2) + 1);
+            for (const auto& keymap : keymaps) {
+                charArray.push_back(const_cast<char*>(keymap.key->data()));   //NOLINT
+                charArray.push_back(const_cast<char*>(keymap.value->data())); //NOLINT
+            }
+            charArray.push_back(nullptr);
+            lotusEngine_.reset(NewCustomEngine(charArray.data(), engine_->dictionary(), engine_->macroTable()));
+        } else {
+            lotusEngine_.reset(NewEngine(engine_->config().inputMethod->data(), engine_->dictionary(), engine_->macroTable()));
+        }
+        setOption();
+        resetMacroSkip();
+    }
+
+    void LotusState::setOption() {
+        if (!lotusEngine_)
+            return;
+        FcitxBambooEngineOption option = {
+            .autoNonVnRestore    = *engine_->config().autoNonVnRestore,
+            .ddFreeStyle         = *engine_->config().ddFreeStyle,
+            .macroEnabled        = *engine_->config().enableMacro,
+            .autoCapitalizeMacro = *engine_->config().capitalizeMacro,
+            .spellCheckWithDicts = *engine_->config().spellCheck,
+            .outputCharset       = engine_->config().outputCharset->data(),
+            .modernStyle         = *engine_->config().modernStyle,
+            .freeMarking         = *engine_->config().freeMarking,
+            .w2u                 = static_cast<int>(*engine_->config().w2u),
+            .bracketTransform    = static_cast<int>(*engine_->config().bracketTransform),
+            .timeFormat          = engine_->config().timeFormat->data(),
+            .dateFormat          = engine_->config().dateFormat->data(),
+        };
+
+        EngineSetOption(lotusEngine_.handle(), &option);
+    }
+
+    bool LotusState::connect_uinput_server() {
+        if (uinput_client_fd_ >= 0)
+            return true;
+        const std::string current_path = buildSocketPath("kb");
+        int               current_fd   = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK, 0);
+        if (current_fd < 0) {
+            LOTUS_ERROR("Failed to create socket: " + std::string(strerror(errno)));
+            return false;
+        }
+
+        struct sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+
+        addr.sun_path[0] = '\0';
+        memcpy(&addr.sun_path[1], current_path.c_str(), current_path.length());
+        socklen_t len = offsetof(struct sockaddr_un, sun_path) + current_path.length() + 1;
+
+        if (connect(current_fd, (struct sockaddr*)&addr, len) == 0) {
+            uinput_client_fd_ = current_fd;
+            return true;
+        }
+        close(current_fd);
+        int old_fd = uinput_client_fd_.exchange(-1);
+        if (old_fd != -1) {
+            close(old_fd);
+        }
+        return false;
+    }
+
+    int LotusState::setup_uinput() {
+        return connect_uinput_server() ? uinput_client_fd_.load(std::memory_order_acquire) : -1;
+    }
+
+    void LotusState::send_kb_msg(KbOp op, size_t count, uint32_t pre_delay, uint32_t post_delay) {
+        if (count > KB_MAX_COUNT || pre_delay > KB_MAX_DELAY_MS || post_delay > KB_MAX_DELAY_MS) {
+            effectiveMode_ = LotusMode::Preedit;
+            modeReason_ = "Helper request exceeds protocol limits";
+            ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+            return;
+        }
+        if (uinput_client_fd_ < 0 && !connect_uinput_server()) {
+            effectiveMode_ = LotusMode::Preedit;
+            modeReason_ = "Uinput helper unavailable";
+            ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+            return;
+        }
+        if (helperRequestPending_) {
+            effectiveMode_ = LotusMode::Preedit;
+            modeReason_ = "Uinput helper request still pending; using Preedit";
+            ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+            return;
+        }
+
+        const KbRequest request{KB_PROTOCOL_VERSION, op, static_cast<std::uint32_t>(count), pre_delay, post_delay};
+        if (!kb_request_is_valid(request)) {
+            effectiveMode_ = LotusMode::Preedit;
+            modeReason_ = "Invalid helper request";
+            ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+            return;
+        }
+
+        std::uint8_t bytes[KB_REQUEST_BYTES];
+        kb_encode_request(request, bytes);
+        const int fd = uinput_client_fd_.load(std::memory_order_acquire);
+        if (send(fd, bytes, sizeof(bytes), MSG_NOSIGNAL) != static_cast<ssize_t>(sizeof(bytes))) {
+            cancelHelper();
+            modeReason_ = "Uinput helper disconnected; replacement interrupted";
+            ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+            return;
+        }
+        helperRequestPending_ = true;
+        pendingHelperOp_ = op;
+
+        if (!kbResponseEventSource_) {
+            kbResponseEventSource_ = engine_->instance()->eventLoop().addIOEvent(fd, IOEventFlag::In, [this, fd](EventSourceIO*, int, IOEventFlags) {
+                std::uint8_t responseBytes[KB_RESPONSE_BYTES];
+                const ssize_t received = recv(fd, responseBytes, sizeof(responseBytes), MSG_DONTWAIT | MSG_TRUNC);
+                if (received <= 0) {
+                    if (received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+                        return false;
+                    cancelHelper();
+                    modeReason_ = "Uinput helper disconnected; replacement interrupted";
+                    helperProbeFailed_ = true;
+                    ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+                    return true;
+                }
+                if (received != static_cast<ssize_t>(sizeof(responseBytes))) {
+                    cancelHelper();
+                    modeReason_ = "Invalid helper response; replacement interrupted";
+                    helperProbeFailed_ = true;
+                    ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+                    return true;
+                }
+                const KbResponse response = kb_decode_response(responseBytes);
+                helperRequestPending_ = false;
+                kbResponseTimeoutSource_.reset();
+                if (!kb_response_is_valid(response) || response.status != KbStatus::Accepted) {
+                    helperReady_ = false;
+                    probePending_ = false;
+                    helperProbeFailed_ = true;
+                    effectiveMode_ = LotusMode::Preedit;
+                    modeReason_ = response.status == KbStatus::InactiveSession
+                                      ? "Desktop session is inactive or locked"
+                                      : response.status == KbStatus::PointerUnavailable ? "No supported pointer device detected" : "Uinput helper rejected operation";
+                    is_deleting_.store(false, std::memory_order_release);
+                    buffered_keys_.clear();
+                    kbResponseEventSource_.reset();
+                    ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+                    return true;
+                }
+                if (pendingHelperOp_ == KbOp::Probe) {
+                    helperReady_ = true;
+                    probePending_ = false;
+                    if (!hasHistory_ && oldPreBuffer_.empty() && isUinputMode(requestedMode_)) {
+                        effectiveMode_ = requestedMode_;
+                        modeReason_.clear();
+                    }
+                    ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+                }
+                return false;
+            });
+        }
+        const uint64_t timeout = static_cast<uint64_t>(pre_delay + post_delay + 500) * 1000;
+        kbResponseTimeoutSource_ = engine_->instance()->eventLoop().addTimeEvent(
+            CLOCK_MONOTONIC, now(CLOCK_MONOTONIC) + timeout, 0, [this, fd](EventSourceTime*, uint64_t) {
+                if (helperRequestPending_) {
+                    helperRequestPending_ = false;
+                    probePending_ = false;
+                    helperReady_ = false;
+                    helperProbeFailed_ = true;
+                    effectiveMode_ = LotusMode::Preedit;
+                    modeReason_ = "Uinput helper response timed out; replacement interrupted";
+                    is_deleting_.store(false, std::memory_order_release);
+                    buffered_keys_.clear();
+                    kbResponseEventSource_.reset();
+                    const int old_fd = uinput_client_fd_.exchange(-1, std::memory_order_acq_rel);
+                    ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+                    if (old_fd >= 0) {
+                        shutdown(old_fd, SHUT_RDWR);
+                        close(old_fd);
+                    }
+                }
+                kbResponseTimeoutSource_.reset();
+                return false;
+            });
+    }
+    void LotusState::probeHelper() {
+        if (probePending_ || helperRequestPending_)
+            return;
+        helperProbeFailed_ = false;
+        helperReady_ = false;
+        probePending_ = true;
+        if (!connect_uinput_server()) {
+            probePending_ = false;
+            effectiveMode_ = LotusMode::Preedit;
+            modeReason_ = "Uinput helper unavailable";
+            helperProbeFailed_ = true;
+            ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+            return;
+        }
+        send_kb_msg(KbOp::Probe, 0, 0, 0);
+    }
+
+    void LotusState::cancelHelper() {
+        const bool replacementInFlight =
+            is_deleting_.load(std::memory_order_acquire) ||
+            (helperRequestPending_ && pendingHelperOp_ != KbOp::Probe);
+        kbResponseTimeoutSource_.reset();
+        kbResponseEventSource_.reset();
+        helperRequestPending_ = false;
+        probePending_ = false;
+        helperReady_ = false;
+
+        const int fd = uinput_client_fd_.exchange(-1, std::memory_order_acq_rel);
+        if (fd >= 0) {
+            if (replacementInFlight) {
+                const KbRequest request{KB_PROTOCOL_VERSION, KbOp::Cancel, 0, 0, 0};
+                std::uint8_t bytes[KB_REQUEST_BYTES];
+                kb_encode_request(request, bytes);
+                send(fd, bytes, sizeof(bytes), MSG_NOSIGNAL | MSG_DONTWAIT);
+            }
+            shutdown(fd, SHUT_RDWR);
+            close(fd);
+        }
+
+        if (replacementInFlight) {
+            is_deleting_.store(false, std::memory_order_release);
+            expected_backspaces_ = 0;
+            current_backspace_count_ = 0;
+            pending_commit_string_.clear();
+            buffered_keys_.clear();
+            clearAllBuffers();
+        }
+        if (isUinputMode(requestedMode_)) {
+            effectiveMode_ = LotusMode::Preedit;
+            modeReason_ = "Uinput helper disconnected; using Preedit";
+        }
+        ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+    }
+
+    void LotusState::send_backspace_uinput(size_t count, uint32_t pre_delay, uint32_t post_delay) {
+        send_kb_msg(KbOp::Backspace, count, pre_delay, post_delay);
+    }
+
+    void LotusState::send_select_uinput(size_t count, uint32_t pre_delay, uint32_t post_delay) {
+        send_kb_msg(KbOp::Select, count, pre_delay, post_delay);
+    }
+
+    bool LotusState::isAutofillCertain(const SurroundingText& s) {
+        if (!s.isValid() || oldPreBuffer_.empty()) {
+            return false;
+        }
+
+        auto               textRange         = fcitx::utf8::MakeUTF8CharRange(s.text());
+        auto               oldPreBufferRange = fcitx::utf8::MakeUTF8CharRange(oldPreBuffer_);
+        std::u32string     u32Text(textRange.begin(), textRange.end());
+        std::u32string     u32OldPreBuffer(oldPreBufferRange.begin(), oldPreBufferRange.end());
+
+        const unsigned int cursor  = s.cursor();
+        const unsigned int anchor  = s.anchor();
+        const size_t       textLen = u32Text.length();
+
+        // Fix that surrounding text is delay update
+        const size_t buffLen    = u32OldPreBuffer.length();
+        const size_t pb         = u32Text.find(u32OldPreBuffer);
+        size_t       rangeStart = static_cast<size_t>(cursor) >= buffLen ? static_cast<size_t>(cursor) - buffLen : 0;
+        const bool   sameprefix = pb != std::u32string::npos && pb >= rangeStart && pb <= static_cast<size_t>(cursor);
+
+        // Detect browser autofill/autocomplete suggestions via selection.
+        if (cursor != anchor) {
+            unsigned int selectionStart = std::min(anchor, cursor);
+            unsigned int selectionEnd   = std::max(anchor, cursor);
+
+            // Only consider it browser autofill if the selection starts at the cursor
+            // and extends to the end of the line (common address bar behavior).
+            if (selectionStart >= cursor || (selectionStart < cursor && selectionEnd > cursor)) {
+                if (!sameprefix)
+                    return false;
+                // If the selection contains a newline, it's likely a multiline editor (AI ghost text),
+                // not a single-line URL/Search bar.
+                size_t p = u32Text.find(U'\n', selectionStart);
+                return p == std::u32string::npos || p >= static_cast<size_t>(selectionEnd);
+            }
+        }
+
+        if (textLen == static_cast<size_t>(cursor)) {
+            realtextLen.store(textLen, std::memory_order_release);
+            return false;
+        }
+
+        // Heuristic: rapid text growth in a single-line context.
+        // Applied only when no newline is present after the cursor to distinguish from AI text in editors.
+        // Gecko/Firefox: if buffLen > textLen, surrounding text is stale (async update race)
+        if (buffLen > textLen) {
+            return false;
+        }
+        if (textLen > static_cast<size_t>(cursor) + 1 && cursor == realtextLen.load(std::memory_order_acquire) && u32Text.find(U'\n', cursor) == std::u32string::npos && sameprefix)
+            return true;
+
+        for (auto v = realtextLen.load(std::memory_order_acquire); v < cursor && !realtextLen.compare_exchange_weak(v, cursor, std::memory_order_acq_rel);)
+            ;
+        return false;
+    }
+
+    void LotusState::handlePreeditMode(KeyEvent& keyEvent, KeySym currentSym) {
+        if (EngineProcessKeyEvent(lotusEngine_.handle(), currentSym, keyEvent.rawKey().states()) != 0U)
+            keyEvent.filterAndAccept();
+        if (auto commit = UniqueCPtr<char>(EnginePullCommit(lotusEngine_.handle()))) {
+            if (commit && (*commit.get() != 0)) {
+                ic_->commitString(commit.get());
+            }
+        }
+        ic_->inputPanel().reset();
+        UniqueCPtr<char> preedit(EnginePullPreedit(lotusEngine_.handle()));
+        if (preedit && (*preedit.get() != 0)) {
+            std::string_view view = preedit.get();
+            Text             text;
+            TextFormatFlags  fmt = TextFormatFlag::Underline;
+            if (utf8::validate(view))
+                text.append(std::string(view), fmt);
+            text.setCursor(static_cast<int>(text.textLength()));
+            if (ic_->capabilityFlags().test(CapabilityFlag::Preedit))
+                ic_->inputPanel().setClientPreedit(text);
+            else
+                ic_->inputPanel().setPreedit(text);
+            hasHistory_ = true;
+        } else {
+            hasHistory_ = false;
+        }
+        ic_->updatePreedit();
+        ic_->updateUserInterface(UserInterfaceComponent::InputPanel);
+    }
+
+    void LotusState::updateEmojiPageStatus(CommonCandidateList* commonList) {
+        if ((commonList == nullptr) || commonList->empty()) {
+            return;
+        }
+
+        int pageSize = commonList->pageSize();
+        if (pageSize <= 0) {
+            pageSize = 9;
+        }
+
+        int         totalItems  = commonList->totalSize();
+        int         currentPage = commonList->currentPage() + 1;
+        int         totalPages  = (totalItems + pageSize - 1) / pageSize;
+
+        std::string status = _("Page ") + std::to_string(currentPage) + "/" + std::to_string(totalPages);
+        ic_->inputPanel().setAuxDown(Text(status));
+    }
+
+    void LotusState::handleEmojiMode(KeyEvent& keyEvent) {
+        const KeySym currentSym      = keyEvent.rawKey().sym();
+        bool         isCtrlBackspace = isBackspace(currentSym) && ((keyEvent.rawKey().states() & KeyState::Ctrl) != 0U);
+
+        if (keyEvent.key().hasModifier() && !isCtrlBackspace) {
+            keyEvent.forward();
+            return;
+        }
+
+        auto baseList   = ic_->inputPanel().candidateList();
+        auto commonList = std::dynamic_pointer_cast<CommonCandidateList>(baseList);
+        if (commonList && currentSym >= FcitxKey_1 && currentSym <= FcitxKey_9) {
+            int offset      = currentSym - FcitxKey_1;
+            int globalIndex = (commonList->currentPage() * commonList->pageSize()) + offset;
+
+            if (globalIndex < commonList->totalSize()) {
+                commonList->candidateFromAll(globalIndex).select(ic_);
+                keyEvent.filterAndAccept();
+                return;
+            }
+        }
+
+        if (commonList && !commonList->empty()) {
+            int  globalCursorIndex = commonList->globalCursorIndex();
+            int  totalSize         = commonList->totalSize();
+            int  currentPage       = commonList->currentPage();
+            int  pageSize          = commonList->pageSize();
+            int  localCursorIndex  = globalCursorIndex - (currentPage * pageSize);
+
+            bool handled = false;
+
+            switch (currentSym) {
+                case FcitxKey_Tab:
+                case FcitxKey_Down: {
+                    if (localCursorIndex < pageSize - 1 && globalCursorIndex < totalSize - 1) {
+                        commonList->setGlobalCursorIndex(globalCursorIndex + 1);
+                    } else {
+                        commonList->setGlobalCursorIndex(currentPage * pageSize);
+                    }
+                    handled = true;
+                    break;
+                }
+
+                case FcitxKey_ISO_Left_Tab:
+                case FcitxKey_Up: {
+                    if (localCursorIndex > 0) {
+                        commonList->setGlobalCursorIndex(globalCursorIndex - 1);
+                    } else {
+                        int lastIndex = std::min((currentPage * pageSize) + pageSize - 1, totalSize - 1);
+                        commonList->setGlobalCursorIndex(lastIndex);
+                    }
+                    handled = true;
+                    break;
+                }
+                case FcitxKey_Page_Down:
+                case FcitxKey_Right: {
+                    if (commonList->hasNext()) {
+                        commonList->next();
+                        int newPage = commonList->currentPage();
+                        commonList->setGlobalCursorIndex(newPage * pageSize);
+                        handled = true;
+                    }
+                    break;
+                }
+                case FcitxKey_Page_Up:
+                case FcitxKey_Left: {
+                    if (commonList->hasPrev()) {
+                        commonList->prev();
+                        int newPage = commonList->currentPage();
+                        commonList->setGlobalCursorIndex(newPage * pageSize);
+                        handled = true;
+                    }
+                    break;
+                }
+                default: break;
+            }
+
+            if (handled) {
+                updateEmojiPageStatus(commonList.get());
+                ic_->updateUserInterface(UserInterfaceComponent::InputPanel);
+                keyEvent.filterAndAccept();
+                return;
+            }
+        }
+
+        if (isBackspace(currentSym)) {
+            if (!emojiBuffer_.empty()) {
+                if (isCtrlBackspace) {
+                    emojiBuffer_.clear();
+                } else {
+                    eraseLastUtf8Codepoint(emojiBuffer_);
+                }
+                keyEvent.filterAndAccept();
+            } else {
+                keyEvent.forward();
+            }
+            updateEmojiPreedit();
+            return;
+        }
+
+        switch (currentSym) {
+            case FcitxKey_space:
+            case FcitxKey_Return: {
+                if (commonList && !commonList->empty()) {
+                    int globalIdx = commonList->globalCursorIndex();
+                    commonList->candidateFromAll(globalIdx).select(ic_);
+                    keyEvent.filterAndAccept();
+                } else if (currentSym == FcitxKey_Return && !emojiBuffer_.empty()) {
+                    ic_->commitString(emojiBuffer_);
+                    emojiBuffer_.clear();
+                    updateEmojiPreedit();
+                    keyEvent.filterAndAccept();
+                } else {
+                    keyEvent.forward();
+                }
+                return;
+            }
+
+            case FcitxKey_Escape: {
+                emojiBuffer_.clear();
+                emojiCandidates_.clear();
+                ic_->inputPanel().reset();
+                ic_->updateUserInterface(UserInterfaceComponent::InputPanel);
+                keyEvent.filterAndAccept();
+                return;
+            }
+
+            default: break;
+        }
+
+        {
+            std::string utf8Char = Key::keySymToUTF8(currentSym);
+            if (!utf8Char.empty()) {
+                emojiBuffer_.append(utf8Char);
+                keyEvent.filterAndAccept();
+                updateEmojiPreedit();
+            } else {
+                keyEvent.forward();
+            }
+        }
+    }
+    void LotusState::updateEmojiPreedit() {
+        if (emojiBuffer_.empty()) {
+            emojiCandidates_ = engine_->emojiLoader().history();
+            if (emojiCandidates_.empty()) {
+                ic_->inputPanel().reset();
+                ic_->updatePreedit();
+                ic_->updateUserInterface(UserInterfaceComponent::InputPanel);
+                return;
+            }
+        } else {
+            emojiCandidates_ = engine_->emojiLoader().search(emojiBuffer_);
+        }
+
+        if (!emojiBuffer_.empty()) {
+            Text preeditText;
+            preeditText.append(emojiBuffer_, TextFormatFlag::Underline);
+            preeditText.setCursor(static_cast<int>(preeditText.textLength()));
+            if (ic_->capabilityFlags().test(CapabilityFlag::Preedit))
+                ic_->inputPanel().setClientPreedit(preeditText);
+            else
+                ic_->inputPanel().setPreedit(preeditText);
+        } else {
+            ic_->inputPanel().setClientPreedit(Text());
+            ic_->inputPanel().setPreedit(Text());
+        }
+
+        if (!emojiCandidates_.empty()) {
+            auto candidateList = std::make_unique<CommonCandidateList>();
+            candidateList->setLayoutHint(CandidateLayoutHint::Vertical);
+            candidateList->setPageSize(9);
+
+            for (size_t i = 0; i < emojiCandidates_.size(); ++i) {
+                size_t localIndex = (i % 9) + 1;
+                Text   displayLabel;
+                if (emojiBuffer_.empty()) {
+                    displayLabel.append(std::to_string(localIndex) + ": " + emojiCandidates_[i].output, TextFormatFlag::NoFlag);
+                } else {
+                    displayLabel.append(std::to_string(localIndex) + ": " + emojiCandidates_[i].trigger + " " + emojiCandidates_[i].output, TextFormatFlag::NoFlag);
+                }
+                candidateList->append(std::make_unique<EmojiCandidateWord>(displayLabel, this, emojiCandidates_[i]));
+            }
+            candidateList->setGlobalCursorIndex(0);
+
+            ic_->inputPanel().setCandidateList(std::move(candidateList));
+            auto currentList = std::dynamic_pointer_cast<CommonCandidateList>(ic_->inputPanel().candidateList());
+            updateEmojiPageStatus(currentList.get());
+        } else {
+            ic_->inputPanel().setCandidateList(nullptr);
+        }
+
+        ic_->updatePreedit();
+        ic_->updateUserInterface(UserInterfaceComponent::InputPanel);
+    }
+
+    void LotusState::finishReplacement(KeyEvent& event) {
+        std::string commitText = std::move(pending_commit_string_);
+        pending_commit_string_.clear();
+
+        if (!commitText.empty()) {
+            ic_->commitString(commitText);
+            updateLastCommitTime();
+        }
+        expected_backspaces_     = 0;
+        current_backspace_count_ = 0;
+        event.filterAndAccept();
+        is_deleting_.store(false, std::memory_order_release);
+        replayBufferedKeys();
+    }
+
+    bool LotusState::handleUInputKeyPress(KeyEvent& event, KeySym currentSym) {
+        const LotusMode realMode = effectiveMode_;
+        if (!is_deleting_.load()) {
+            return false;
+        }
+        // In Select mode the uinput server emits Shift+Left, so the echoed Left
+        // presses are the selection signal. The final one is swallowed in
+        // finishReplacement so the app only sees the count it should select.
+        const bool isSelectEcho = realMode == LotusMode::Select && currentSym == FcitxKey_Left;
+        if (!isBackspace(currentSym) && !isSelectEcho) {
+            return false;
+        }
+        current_backspace_count_ += 1;
+        if (current_backspace_count_ < expected_backspaces_) {
+            return false; // Allow intermediate backspaces/lefts to reach the app to clear autofill/old text / extend the selection.
+        }
+        finishReplacement(event);
+        return true;
+    }
+
+    void LotusState::performReplacement(const std::string& deletedPart, const std::string& addedPart) {
+        const LotusMode realMode = effectiveMode_;
+        uint32_t pre_delay = 0;
+        if (last_commit_time_.time_since_epoch().count() > 0) {
+            auto          now              = std::chrono::steady_clock::now();
+            auto          elapsedMs        = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_commit_time_).count();
+            const int64_t requiredCooldown = (realMode == LotusMode::Select) ? 25 : 10;
+            if (elapsedMs < requiredCooldown) {
+                pre_delay = requiredCooldown - elapsedMs;
+            }
+        }
+        current_backspace_count_       = 0;
+        pending_commit_string_         = addedPart;
+        expected_backspaces_           = utf8::length(deletedPart);
+        const auto& surrounding        = ic_->surroundingText();
+        bool        isAutofillCertain_ = isAutofillCertain(surrounding);
+        if (realMode != LotusMode::Minecraft) {
+            ++expected_backspaces_;
+            // Enable Autofill detection for all frontends (Wayland/IBus).
+            // This fixes the "toôi" duplication bug in Chromium-based search bars.
+            // The isAutofillCertain function has been optimized to differentiate
+            // between browser autofill and AI ghost text.
+            // Skipped for Select: the app only sees expected_backspaces_ - 1
+            // arrows, and the autofill suffix is already selected, so the one
+            // arrow reaches the character being replaced and the commit swaps
+            // both at once.
+            if (realMode != LotusMode::SuperSmooth && isAutofillCertain_) {
+                ++expected_backspaces_;
+            }
+        }
+        is_deleting_.store(true, std::memory_order_release);
+        const int sleepTime  = (realMode == LotusMode::Smooth || realMode == LotusMode::SuperSmooth) ? 2 : 8;
+        uint32_t  post_delay = (realMode == LotusMode::Select) ? 20 : sleepTime * (expected_backspaces_ - 1);
+        // Select mode: the uinput server selects with Shift+Left instead. The
+        // trigger-key compensation above still applies because the last echoed
+        // Left is swallowed; autofill compensation does not, see above.
+        if (realMode == LotusMode::Select && !isAutofillCertain_) {
+            send_select_uinput(expected_backspaces_, pre_delay, post_delay);
+            LOTUS_INFO("Send select of " + std::to_string(expected_backspaces_) + " characters");
+            return;
+        }
+        send_backspace_uinput(expected_backspaces_, pre_delay, post_delay);
+        LOTUS_INFO("Send " + std::to_string(expected_backspaces_) + " backspaces");
+    }
+
+    bool LotusState::checkForwardSpecialKey(KeyEvent& keyEvent, KeySym& currentSym) {
+        if (keyEvent.key().isCursorMove() || currentSym == FcitxKey_Tab || currentSym == FcitxKey_KP_Tab || currentSym == FcitxKey_ISO_Left_Tab || currentSym == FcitxKey_Escape ||
+            keyEvent.key().hasModifier()) {
+            is_deleting_.store(false, std::memory_order_release);
+            expected_backspaces_     = 0;
+            current_backspace_count_ = 0;
+            pending_commit_string_.clear();
+            hasHistory_ = false;
+            ResetEngine(lotusEngine_.handle());
+            oldPreBuffer_.clear();
+            return true;
+        }
+
+        if (currentSym == FcitxKey_Delete) {
+            hasHistory_ = false;
+            oldPreBuffer_.clear();
+            ResetEngine(lotusEngine_.handle());
+            return true;
+        }
+
+        if (currentSym >= FcitxKey_KP_0 && currentSym <= FcitxKey_KP_9) {
+            currentSym = static_cast<KeySym>(FcitxKey_0 + (currentSym - FcitxKey_KP_0));
+            return false;
+        }
+
+        switch (currentSym) {
+            case FcitxKey_KP_Add: {
+                currentSym = FcitxKey_plus;
+                break;
+            }
+            case FcitxKey_KP_Subtract: {
+                currentSym = FcitxKey_minus;
+                break;
+            }
+            case FcitxKey_KP_Divide: {
+                currentSym = FcitxKey_slash;
+                break;
+            }
+            case FcitxKey_KP_Multiply: {
+                currentSym = FcitxKey_asterisk;
+                break;
+            }
+            case FcitxKey_KP_Decimal: {
+                currentSym = FcitxKey_period;
+                break;
+            }
+            case FcitxKey_KP_Enter: {
+                currentSym = FcitxKey_Return;
+                break;
+            }
+            case FcitxKey_KP_Equal: {
+                currentSym = FcitxKey_equal;
+                break;
+            }
+            case FcitxKey_KP_Space: {
+                currentSym = FcitxKey_space;
+                break;
+            }
+            default: break;
+        }
+        return false;
+    }
+
+    void LotusState::handleUinputMode(KeyEvent& keyEvent, KeySym currentSym) {
+        if (checkForwardSpecialKey(keyEvent, currentSym)) {
+            keyEvent.forward();
+            return;
+        }
+
+        if (uinput_client_fd_ < 0) {
+            setup_uinput();
+        }
+
+        if (isBackspace(currentSym) || currentSym == FcitxKey_Return) {
+            if (isBackspace(currentSym)) {
+                hasHistory_ = true;
+                EngineProcessKeyEvent(lotusEngine_.handle(), FcitxKey_BackSpace, 0);
+                UniqueCPtr<char> preeditC(EnginePullPreedit(lotusEngine_.handle()));
+                oldPreBuffer_ = (preeditC && (*preeditC.get() != 0)) ? preeditC.get() : "";
+            } else {
+                hasHistory_ = false;
+                ResetEngine(lotusEngine_.handle());
+                oldPreBuffer_.clear();
+            }
+            keyEvent.forward();
+            return;
+        }
+
+        std::string keyUtf8 = Key::keySymToUTF8(currentSym);
+        if (keyUtf8.empty()) {
+            keyEvent.forward();
+            return;
+        }
+
+        bool processed = EngineProcessKeyEvent(lotusEngine_.handle(), currentSym, keyEvent.rawKey().states()) != 0U;
+
+        auto commitF = UniqueCPtr<char>(EnginePullCommit(lotusEngine_.handle()));
+        if (commitF && (*commitF.get() != 0)) {
+            std::string commitStr = commitF.get();
+            std::string deletedPart;
+            std::string addedPart;
+            compareAndSplitStrings(oldPreBuffer_, commitStr, deletedPart, addedPart);
+
+            if (!deletedPart.empty()) {
+                performReplacement(deletedPart, addedPart);
+                keyEvent.filterAndAccept();
+            } else {
+                bool wasAutoCapitalized = (currentSym != keyEvent.rawKey().sym());
+                if (!addedPart.empty() && (keyUtf8 != addedPart || wasAutoCapitalized)) {
+                    // Prevent auto-capitalized character replacement from stripping out Vietnamese chars
+                    if (addedPart.size() > 1 && addedPart.back() == ' ') {
+                        // Stripping the trigger key (space) from addedPart
+#if __cplusplus >= 202002L
+                        addedPart.resize(addedPart.size() - 1);
+#else
+                        addedPart = addedPart.substr(0, addedPart.size() - 1);
+#endif
+                    }
+                    ic_->commitString(addedPart);
+                    keyEvent.filterAndAccept();
+                } else {
+                    keyEvent.forward();
+                }
+            }
+
+            hasHistory_ = false;
+            ResetEngine(lotusEngine_.handle());
+            oldPreBuffer_.clear();
+
+            return;
+        }
+
+        if (!processed) {
+            UniqueCPtr<char> preeditC(EnginePullPreedit(lotusEngine_.handle()));
+            if (!preeditC || (*preeditC.get() == 0)) {
+                hasHistory_ = false;
+                ResetEngine(lotusEngine_.handle());
+                oldPreBuffer_.clear();
+                keyEvent.forward();
+            }
+            return;
+        }
+
+        hasHistory_ = true;
+        realtextLen.fetch_add(1, std::memory_order_acq_rel);
+
+        UniqueCPtr<char> preeditC(EnginePullPreedit(lotusEngine_.handle()));
+        std::string      preeditStr = (preeditC && (*preeditC.get() != 0)) ? preeditC.get() : "";
+
+        std::string      deletedPart;
+        std::string      addedPart;
+
+        if (wa_chromium_flag)
+            keyEvent.filterAndAccept();
+
+        if (compareAndSplitStrings(oldPreBuffer_, preeditStr, deletedPart, addedPart) != 0) {
+            if (deletedPart.empty()) {
+                bool isCommit           = false;
+                bool wasAutoCapitalized = (currentSym != keyEvent.rawKey().sym());
+                if (!addedPart.empty()) {
+                    oldPreBuffer_ = preeditStr;
+                    if (wa_chromium_flag || wasAutoCapitalized || addedPart != keyUtf8) {
+                        ic_->commitString(addedPart);
+                        if (!wa_chromium_flag) {
+                            keyEvent.filterAndAccept();
+                            isCommit = true;
+                        }
+                    }
+                }
+                if (!wa_chromium_flag && !isCommit) {
+                    keyEvent.forward();
+                }
+            } else {
+                if (uinput_client_fd_ < 0) {
+                    LOTUS_ERROR("Cannot connect to uinput server, commit rawkey");
+                    std::string rawKey = keyEvent.key().toString();
+                    if (!rawKey.empty()) {
+                        ic_->commitString(rawKey);
+                    }
+                    return;
+                }
+
+                if (is_deleting_.load()) {
+                    is_deleting_.store(false, std::memory_order_release);
+                }
+
+                if (!wa_chromium_flag)
+                    keyEvent.filterAndAccept();
+                performReplacement(deletedPart, addedPart);
+                oldPreBuffer_ = preeditStr;
+            }
+        }
+    }
+    void LotusState::handleFakeBackspaceMode(KeyEvent& keyEvent, KeySym currentSym) {
+        if (checkForwardSpecialKey(keyEvent, currentSym)) {
+            keyEvent.forward();
+            return;
+        }
+
+        const std::string keyUtf8 = Key::keySymToUTF8(currentSym);
+        if (keyUtf8.empty() && !isBackspace(currentSym) && currentSym != FcitxKey_Return) {
+            keyEvent.forward();
+            return;
+        }
+        if (!oldPreBuffer_.empty()) {
+            const auto& surrounding = ic_->surroundingText();
+            if (surrounding.isValid()) {
+                auto text = utf8::MakeUTF8CharRange(surrounding.text());
+                const auto begin = text.begin();
+                const auto end = text.end();
+                const size_t textLength = static_cast<size_t>(std::distance(begin, end));
+                const size_t cursor = surrounding.cursor();
+                const size_t suffixLength = utf8::length(oldPreBuffer_);
+                bool suffixMatches = surrounding.cursor() == surrounding.anchor() && cursor <= textLength && cursor >= suffixLength;
+                if (suffixMatches) {
+                    auto suffixBegin = begin;
+                    auto suffixEnd = begin;
+                    std::advance(suffixBegin, static_cast<std::ptrdiff_t>(cursor - suffixLength));
+                    std::advance(suffixEnd, static_cast<std::ptrdiff_t>(cursor));
+                    auto oldText = utf8::MakeUTF8CharRange(oldPreBuffer_);
+                    suffixMatches = std::equal(suffixBegin, suffixEnd, oldText.begin(), oldText.end());
+                }
+                if (!suffixMatches) {
+                    ResetEngine(lotusEngine_.handle());
+                    oldPreBuffer_.clear();
+                    hasHistory_ = false;
+                }
+            }
+        }
+        EngineProcessKeyEvent(lotusEngine_.handle(), currentSym, keyEvent.rawKey().states());
+        auto commit = UniqueCPtr<char>(EnginePullCommit(lotusEngine_.handle()));
+        auto preedit = UniqueCPtr<char>(EnginePullPreedit(lotusEngine_.handle()));
+        const std::string nextText = (commit && *commit.get()) ? commit.get() : ((preedit && *preedit.get()) ? preedit.get() : "");
+
+        std::string deletedPart;
+        std::string addedPart;
+        compareAndSplitStrings(oldPreBuffer_, nextText, deletedPart, addedPart);
+
+        const int time = keyEvent.time();
+        const size_t backspaces = utf8::length(deletedPart);
+        for (size_t i = 0; i < backspaces; ++i) {
+            ic_->forwardKey(Key(FcitxKey_BackSpace), false, time);
+            ic_->forwardKey(Key(FcitxKey_BackSpace), true, time);
+        }
+        if (!addedPart.empty()) {
+            ic_->commitString(addedPart);
+            keyEvent.filterAndAccept();
+        } else if (backspaces > 0) {
+            keyEvent.filterAndAccept();
+        } else {
+            keyEvent.forward();
+        }
+
+        if (commit && *commit.get()) {
+            ResetEngine(lotusEngine_.handle());
+            oldPreBuffer_.clear();
+            hasHistory_ = false;
+        } else {
+            oldPreBuffer_ = nextText;
+            hasHistory_ = !oldPreBuffer_.empty();
+        }
+    }
+
+
+    void LotusState::handleSurroundingText(KeyEvent& keyEvent, KeySym currentSym) {
+        if (checkForwardSpecialKey(keyEvent, currentSym)) {
+            keyEvent.forward();
+            return;
+        }
+        auto* ic = keyEvent.inputContext();
+        if ((ic == nullptr) || !ic->capabilityFlags().test(CapabilityFlag::SurroundingText)) {
+            LOTUS_WARN("Surrounding text not supported");
+            keyEvent.forward();
+            return;
+        }
+
+        const auto& surrounding = ic->surroundingText();
+        if (!surrounding.isValid()) {
+            LOTUS_WARN("Surrounding text is invalid");
+            keyEvent.forward();
+            return;
+        }
+
+        if (isBackspace(keyEvent.rawKey().sym())) {
+            ResetEngine(lotusEngine_.handle());
+            keyEvent.forward();
+            return;
+        }
+
+        const std::string& text   = surrounding.text();
+        unsigned int       cursor = std::min(surrounding.anchor(), surrounding.cursor());
+
+        size_t             textLen = utf8::lengthValidated(text);
+
+        if (textLen == utf8::INVALID_LENGTH || cursor <= 0 || cursor > textLen) {
+            processNormalKey(keyEvent, currentSym);
+            return;
+        }
+
+        {
+            auto startIter = utf8::nextNChar(text.begin(), cursor);
+            auto endIter   = startIter;
+
+            int  scanCount = 0;
+            while (startIter != text.begin() && scanCount < MAX_SCAN_LENGTH) {
+                auto prev = startIter;
+                if (prev != text.begin()) {
+                    --prev;
+                    while (prev != text.begin() && ((*prev & 0xC0) == 0x80)) {
+                        --prev;
+                    }
+                }
+
+                uint32_t ucs4 = utf8::getChar(prev, text.end());
+
+                if (isWordBreak(ucs4))
+                    break;
+
+                startIter = prev;
+                ++scanCount;
+            }
+
+            std::string oldWord(startIter, endIter);
+
+            if (oldWord.empty()) {
+                processNormalKey(keyEvent, currentSym);
+                return;
+            }
+
+            EngineRebuildFromText(lotusEngine_.handle(), oldWord.c_str());
+
+            bool processed = EngineProcessKeyEvent(lotusEngine_.handle(), currentSym, keyEvent.rawKey().states()) != 0U;
+
+            if (!processed) {
+                keyEvent.forward();
+                ResetEngine(lotusEngine_.handle());
+                return;
+            }
+
+            auto        commitPtr  = UniqueCPtr<char>(EnginePullCommit(lotusEngine_.handle()));
+            auto        preeditPtr = UniqueCPtr<char>(EnginePullPreedit(lotusEngine_.handle()));
+
+            std::string newWord;
+            if (commitPtr && (*commitPtr.get() != 0))
+                newWord += commitPtr.get();
+            if (preeditPtr && (*preeditPtr.get() != 0))
+                newWord += preeditPtr.get();
+
+            std::string deletedPart;
+            std::string addedPart;
+            compareAndSplitStrings(oldWord, newWord, deletedPart, addedPart);
+            if ((deletedPart.empty() || deletedPart == oldWord) && addedPart == keyEvent.key().toString()) {
+                ResetEngine(lotusEngine_.handle());
+                keyEvent.forward();
+                return;
+            }
+
+            if (!deletedPart.empty() || !addedPart.empty()) {
+                size_t charsToDelete = utf8::length(deletedPart);
+
+                if (charsToDelete > 0) {
+                    ic->deleteSurroundingText(-static_cast<int>(charsToDelete), static_cast<int>(charsToDelete));
+                }
+
+                if (!addedPart.empty()) {
+                    ic->commitString(addedPart);
+                }
+
+                ResetEngine(lotusEngine_.handle());
+                keyEvent.filterAndAccept();
+                return;
+            }
+
+            ResetEngine(lotusEngine_.handle());
+            keyEvent.filterAndAccept();
+            return;
+        }
+    }
+
+    void LotusState::processNormalKey(KeyEvent& keyEvent, KeySym currentSym) {
+        auto* ic = keyEvent.inputContext();
+        ResetEngine(lotusEngine_.handle());
+        bool processed = EngineProcessKeyEvent(lotusEngine_.handle(), currentSym, keyEvent.rawKey().states()) != 0U;
+        if (processed) {
+            auto        commitPtr  = UniqueCPtr<char>(EnginePullCommit(lotusEngine_.handle()));
+            auto        preeditPtr = UniqueCPtr<char>(EnginePullPreedit(lotusEngine_.handle()));
+            std::string out;
+            if (commitPtr && (*commitPtr.get() != 0))
+                out += commitPtr.get();
+            if (preeditPtr && (*preeditPtr.get() != 0))
+                out += preeditPtr.get();
+
+            if (!out.empty()) {
+                ic->commitString(out);
+            }
+
+            ResetEngine(lotusEngine_.handle());
+            keyEvent.filterAndAccept();
+        } else {
+            keyEvent.forward();
+        }
+    }
+
+    void LotusState::handleDoubleSpaceReplacement() {
+        const LotusMode realMode = effectiveMode_;
+        switch (realMode) {
+            case LotusMode::SurroundingText: {
+                ic_->deleteSurroundingText(-1, 1);
+                ic_->commitString(". ");
+
+                break;
+            }
+            default: { // Uinput, Smooth, Preedit, etc.
+                performReplacement(" ", ". ");
+                break;
+            }
+        }
+        if (*engine_->config().autoCapitalizeAfterPunctuation) {
+            isPrevPunctuation_ = true;
+            shouldCapitalize_  = true;
+        }
+    }
+
+    void LotusState::handleDoubleHyphenReplacement() {
+        const LotusMode realMode = effectiveMode_;
+        // Em-dash (U+2014)
+        std::string emDash = "—";
+        switch (realMode) {
+            case LotusMode::SurroundingText: {
+                ic_->deleteSurroundingText(-1, 1);
+                ic_->commitString(emDash);
+                break;
+            }
+            default: { // Uinput, Smooth, Preedit, etc.
+                performReplacement("-", emDash);
+                break;
+            }
+        }
+    }
+
+    void LotusState::handleOffModeMacro(KeyEvent& keyEvent, KeySym currentSym) {
+        if (checkForwardSpecialKey(keyEvent, currentSym)) {
+            keyEvent.forward();
+            return;
+        }
+
+        if (uinput_client_fd_ < 0) {
+            connect_uinput_server();
+        }
+
+        if (isBackspace(currentSym)) {
+            EngineProcessKeyEvent(lotusEngine_.handle(), FcitxKey_BackSpace, 0);
+            auto preeditC = UniqueCPtr<char>(EnginePullPreedit(lotusEngine_.handle()));
+            oldPreBuffer_ = (preeditC && (*preeditC.get() != 0)) ? preeditC.get() : "";
+            keyEvent.forward();
+            return;
+        }
+
+        if (currentSym == FcitxKey_Return) {
+            if (!oldPreBuffer_.empty()) {
+                ResetEngine(lotusEngine_.handle());
+                oldPreBuffer_.clear();
+            }
+            keyEvent.forward();
+            return;
+        }
+
+        std::string keyUtf8 = Key::keySymToUTF8(currentSym);
+
+        bool        processed = EngineProcessKeyEvent(lotusEngine_.handle(), currentSym, keyEvent.rawKey().states()) != 0U;
+
+        auto        commitPtr = UniqueCPtr<char>(EnginePullCommit(lotusEngine_.handle()));
+        if (processed && commitPtr && (*commitPtr.get() != 0)) {
+            std::string commitStr = commitPtr.get();
+
+            // Determine if this is a macro expansion or just confirmed typed text
+            bool isMacroExpansion = false;
+            if (keyUtf8.empty()) {
+                isMacroExpansion = (commitStr != oldPreBuffer_);
+            } else {
+                isMacroExpansion = (commitStr != oldPreBuffer_ + keyUtf8);
+            }
+
+            if (isMacroExpansion) {
+                // Try uinput replacement first, fallback to deleteSurroundingText, then plain commit
+                if (uinput_client_fd_ >= 0 && !oldPreBuffer_.empty()) {
+                    performReplacement(oldPreBuffer_, commitStr);
+                } else if (ic_->capabilityFlags().test(CapabilityFlag::SurroundingText)) {
+                    const auto& surrounding = ic_->surroundingText();
+                    if (surrounding.isValid()) {
+                        size_t oldLen = utf8::length(oldPreBuffer_);
+                        if (oldLen > 0) {
+                            ic_->deleteSurroundingText(-static_cast<int>(oldLen), static_cast<int>(oldLen));
+                        }
+                        ic_->commitString(commitStr);
+                    } else {
+                        ic_->commitString(commitStr);
+                    }
+                } else {
+                    ic_->commitString(commitStr);
+                }
+                keyEvent.filterAndAccept();
+            } else {
+                // No macro: typed text confirmed by engine, just forward trigger key
+                keyEvent.forward();
+            }
+
+            oldPreBuffer_.clear();
+            hasHistory_ = false;
+            return;
+        }
+
+        // 8. No commit or engine rejected the key
+        if (processed || (commitPtr && (*commitPtr.get() != 0))) {
+            // Engine processed the key (building shadow state)
+            // OR engine rejected the key but committed old text (non-processable key)
+            auto preeditPtr = UniqueCPtr<char>(EnginePullPreedit(lotusEngine_.handle()));
+            oldPreBuffer_   = (preeditPtr && (*preeditPtr.get() != 0)) ? preeditPtr.get() : "";
+            if (!processed) {
+                // Engine committed old text but didn't process the new key → forward the key
+                oldPreBuffer_.clear();
+                hasHistory_ = false;
+            }
+            keyEvent.forward();
+        } else {
+            // Engine didn't handle this key
+            if (!oldPreBuffer_.empty()) {
+                ResetEngine(lotusEngine_.handle());
+                oldPreBuffer_.clear();
+            }
+            keyEvent.forward();
+        }
+    }
+
+    void LotusState::keyEvent(KeyEvent& keyEvent) {
+        LotusMode realMode = effectiveMode_;
+        if (!lotusEngine_)
+            return;
+        const auto& capabilities = ic_->capabilityFlags();
+        if (capabilities.test(CapabilityFlag::PasswordOrSensitive) || capabilities.test(CapabilityFlag::Disable)) {
+            cancelHelper();
+            clearAllBuffers();
+            keyEvent.forward();
+            return;
+        }
+        bool modeStatusChanged = false;
+        if (requestedMode_ == LotusMode::FakeBackspace) {
+            if (engine_->config().outputCharset.value() != "Unicode") {
+                if (effectiveMode_ != LotusMode::Preedit || modeReason_ != "Fake Backspace requires Unicode output") {
+                    effectiveMode_ = LotusMode::Preedit;
+                    modeReason_ = "Fake Backspace requires Unicode output";
+                    modeStatusChanged = true;
+                }
+            } else if (!hasHistory_ && effectiveMode_ != LotusMode::FakeBackspace) {
+                effectiveMode_ = LotusMode::FakeBackspace;
+                modeReason_.clear();
+                modeStatusChanged = true;
+            }
+            realMode = effectiveMode_;
+        } else if (isUinputMode(requestedMode_)) {
+            if (!helperReady_) {
+                if (!probePending_ && !helperProbeFailed_)
+                    probeHelper();
+                if (effectiveMode_ != LotusMode::Preedit || modeReason_.empty()) {
+                    effectiveMode_ = LotusMode::Preedit;
+                    if (modeReason_.empty())
+                        modeReason_ = "Checking Uinput helper; using Preedit";
+                    modeStatusChanged = true;
+                }
+                realMode = LotusMode::Preedit;
+            } else if (effectiveMode_ != requestedMode_ && !hasHistory_ && oldPreBuffer_.empty()) {
+                effectiveMode_ = requestedMode_;
+                modeReason_.clear();
+                ++compositionGeneration_;
+                modeStatusChanged = true;
+                realMode = effectiveMode_;
+            }
+        }
+        if (modeStatusChanged)
+            ic_->updateUserInterface(UserInterfaceComponent::StatusArea);
+        if (realMode == LotusMode::Preedit) {
+            if (keyEvent.rawKey().check(FcitxKey_Shift_L) || keyEvent.rawKey().check(FcitxKey_Shift_R))
+                return;
+        } else if (keyEvent.rawKey().isModifier()) {
+            if (!is_deleting_.load(std::memory_order_acquire)) {
+                handleModifierTap(keyEvent);
+                return;
+            }
+        } else {
+            cancelModifierTap();
+        }
+        if (keyEvent.isRelease())
+            return;
+        if (current_backspace_count_ >= expected_backspaces_ && is_deleting_.load()) {
+            is_deleting_.store(false);
+            current_backspace_count_ = 0;
+            expected_backspaces_     = 0;
+            if (!buffered_keys_.empty()) {
+                replayBufferedKeys();
+            }
+        }
+
+        if (g_mouse_clicked.load(std::memory_order_acquire) && !is_deleting_.load(std::memory_order_acquire)) {
+            g_mouse_clicked.store(false, std::memory_order_release);
+            clearAllBuffers();
+        }
+        KeySym currentSym = keyEvent.rawKey().sym();
+        if (*engine_->config().autoCapitalizeAfterPunctuation && realMode != LotusMode::Off) {
+            // Ignore auto-capitalize side-effects if we're processing automated replacement backspaces
+            bool isAutomatedBackspace = is_deleting_.load(std::memory_order_acquire) && isBackspace(currentSym);
+
+            if (!isAutomatedBackspace) {
+                if (shouldCapitalize_) {
+                    if (currentSym >= FcitxKey_a && currentSym <= FcitxKey_z) {
+                        auto upperSym = static_cast<KeySym>(currentSym - (FcitxKey_a - FcitxKey_A));
+                        currentSym    = upperSym;
+                        keyEvent.setKey(Key(upperSym, keyEvent.rawKey().states()));
+                        shouldCapitalize_ = false;
+                    } else if (currentSym != FcitxKey_space) {
+                        shouldCapitalize_ = false;
+                    }
+                }
+
+                switch (currentSym) {
+                    case FcitxKey_period:
+                    case FcitxKey_exclam:
+                    case FcitxKey_question: isPrevPunctuation_ = true; break;
+                    case FcitxKey_Return:
+                    case FcitxKey_KP_Enter:
+                        shouldCapitalize_  = true;
+                        isPrevPunctuation_ = false;
+                        break;
+                    case FcitxKey_space:
+                        if (isPrevPunctuation_) {
+                            shouldCapitalize_  = true;
+                            isPrevPunctuation_ = false;
+                        }
+                        break;
+                    default:
+                        if (currentSym != FcitxKey_space) {
+                            isPrevPunctuation_ = false;
+                        }
+                        break;
+                }
+            }
+        }
+
+        if (is_deleting_.load(std::memory_order_acquire)) {
+            if (isBackspace(currentSym)) {
+                if (realtextLen.load(std::memory_order_acquire) > 0)
+                    realtextLen.fetch_sub(1, std::memory_order_acq_rel);
+                if (handleUInputKeyPress(keyEvent, currentSym)) {
+                    return;
+                }
+            } else if (realMode == LotusMode::Select && (currentSym == FcitxKey_Left || currentSym == FcitxKey_Delete)) {
+                if (currentSym == FcitxKey_Left) {
+                    // Echoed left arrow extends the selection in the app: consume it as
+                    // a selection signal, never buffer it for replay.
+                    if (realtextLen.load(std::memory_order_acquire) > 0)
+                        realtextLen.fetch_sub(1, std::memory_order_acq_rel);
+                    handleUInputKeyPress(keyEvent, currentSym);
+                } else {
+                    keyEvent.forward();
+                }
+                return;
+            } else {
+                KeySym    symToBuffer   = currentSym;
+                KeyStates stateToBuffer = keyEvent.rawKey().states();
+                if (realMode == LotusMode::Select && current_backspace_count_ < expected_backspaces_ && stateToBuffer.test(KeyState::Shift)) {
+                    symToBuffer   = unshiftKeySym(symToBuffer);
+                    stateToBuffer = stateToBuffer.unset(KeyState::Shift);
+                }
+                std::string keyUtf8Check = Key::keySymToUTF8(symToBuffer);
+                if (!keyUtf8Check.empty() && buffered_keys_.size() < MAX_BUFFERED_KEYS) {
+                    LOTUS_WARN("Typing so fast, add key to queue");
+                    buffered_keys_.push_back({.sym = symToBuffer, .state = stateToBuffer});
+                }
+                keyEvent.filterAndAccept();
+            }
+            return;
+        }
+
+        if (*engine_->config().doubleSpaceToPeriod && realMode != LotusMode::Off) {
+            bool isSpaceKey = (currentSym == FcitxKey_space || currentSym == FcitxKey_KP_Space);
+            if (isSpaceKey && !keyEvent.key().hasModifier()) {
+                if (isPrevSpace_) {
+                    keyEvent.filterAndAccept();
+                    handleDoubleSpaceReplacement();
+                    isPrevSpace_ = false;
+                    return;
+                }
+                isPrevSpace_ = true;
+            } else {
+                isPrevSpace_ = false;
+            }
+        }
+
+        if (*engine_->config().doubleHyphenToEmDash && realMode != LotusMode::Off) {
+            bool isHyphenKey = (currentSym == FcitxKey_minus || currentSym == FcitxKey_KP_Subtract);
+            if (isHyphenKey && !keyEvent.key().hasModifier()) {
+                if (isPrevHyphen_) {
+                    keyEvent.filterAndAccept();
+                    handleDoubleHyphenReplacement();
+                    isPrevHyphen_ = false;
+                    return;
+                }
+                isPrevHyphen_ = true;
+            } else {
+                isPrevHyphen_ = false;
+            }
+        }
+
+        switch (realMode) {
+            case LotusMode::Uinput:
+            case LotusMode::Smooth:
+            case LotusMode::Minecraft:
+            case LotusMode::SuperSmooth:
+            case LotusMode::Select: {
+                handleUinputMode(keyEvent, currentSym);
+                break;
+            }
+            case LotusMode::FakeBackspace: {
+                handleFakeBackspaceMode(keyEvent, currentSym);
+                break;
+            }
+            case LotusMode::SurroundingText: {
+                handleSurroundingText(keyEvent, currentSym);
+                break;
+            }
+            case LotusMode::Preedit: {
+                handlePreeditMode(keyEvent, currentSym);
+                break;
+            }
+            case LotusMode::Emoji: {
+                handleEmojiMode(keyEvent);
+                break;
+            }
+            default: {
+                if (*engine_->config().enableMacroInOffMode && *engine_->config().enableMacro) {
+                    handleOffModeMacro(keyEvent, currentSym);
+                }
+                break;
+            }
+        }
+        reEnableMacroAfterWordEnd();
+    }
+
+    void LotusState::reset(bool isFocusOut) {
+        const LotusMode realMode = effectiveMode_;
+        const auto& surrounding = ic_->surroundingText();
+        const auto& text        = surrounding.text();
+        size_t      textLen     = utf8::length(text);
+        realtextLen.store(textLen, std::memory_order_release);
+        if (is_deleting_.load(std::memory_order_acquire)) {
+            return;
+        }
+        resetMacroSkip();
+
+        if (lotusEngine_) {
+            isPrevSpace_       = false;
+            isPrevHyphen_      = false;
+            shouldCapitalize_  = false;
+            isPrevPunctuation_ = false;
+            if (realMode == LotusMode::Preedit && isFocusOut) {
+                EngineCommitPreedit(lotusEngine_.handle());
+                UniqueCPtr<char> commit(EnginePullCommit(lotusEngine_.handle()));
+                if (commit && (*commit.get() != 0)) {
+                    ic_->commitString(commit.get());
+                }
+            }
+            ResetEngine(lotusEngine_.handle());
+            oldPreBuffer_.clear();
+            hasHistory_ = false;
+        }
+        if (getFrontendName(ic_) != "dbus")
+            clearAllBuffers();
+
+        switch (realMode) {
+            case LotusMode::Preedit: {
+                ic_->inputPanel().reset();
+                ic_->updateUserInterface(UserInterfaceComponent::InputPanel);
+                ic_->updatePreedit();
+                break;
+            }
+            case LotusMode::SurroundingText:
+            case LotusMode::Uinput:
+            case LotusMode::Smooth:
+            case LotusMode::Minecraft:
+            case LotusMode::SuperSmooth:
+            case LotusMode::Select: {
+                ic_->inputPanel().reset();
+                break;
+            }
+            case LotusMode::Emoji: {
+                ic_->inputPanel().reset();
+                ic_->updateUserInterface(UserInterfaceComponent::InputPanel);
+                ic_->updatePreedit();
+                break;
+            }
+            default: {
+                break;
+            }
+        }
+    }
+
+    void LotusState::commitBuffer() {
+        const LotusMode realMode = effectiveMode_;
+        switch (realMode) {
+            case LotusMode::Preedit: {
+                ic_->inputPanel().reset();
+                if (lotusEngine_) {
+                    EngineCommitPreedit(lotusEngine_.handle());
+                    UniqueCPtr<char> commit(EnginePullCommit(lotusEngine_.handle()));
+                    if (commit && (*commit.get() != 0))
+                        ic_->commitString(commit.get());
+                    ResetEngine(lotusEngine_.handle());
+                }
+                ic_->updateUserInterface(UserInterfaceComponent::InputPanel);
+                ic_->updatePreedit();
+                break;
+            }
+            case LotusMode::Uinput:
+            case LotusMode::Smooth:
+            case LotusMode::SurroundingText:
+            case LotusMode::Minecraft:
+            case LotusMode::SuperSmooth:
+            case LotusMode::Select: {
+                if (lotusEngine_) {
+                    ResetEngine(lotusEngine_.handle());
+                }
+                break;
+            }
+            default: {
+                break;
+            }
+        }
+    }
+
+    void LotusState::clearAllBuffers() {
+        LOTUS_DEBUG("Clear all buffers");
+        if (is_deleting_.load(std::memory_order_acquire)) {
+            return;
+        }
+        resetMacroSkip();
+        oldPreBuffer_.clear();
+        hasHistory_ = false;
+        if (!is_deleting_.load(std::memory_order_acquire)) {
+            expected_backspaces_     = 0;
+            current_backspace_count_ = 0;
+            pending_commit_string_.clear();
+        }
+        emojiBuffer_.clear();
+        emojiCandidates_.clear();
+        buffered_keys_.clear();
+        shouldCapitalize_  = false;
+        isPrevSpace_       = false;
+        isPrevHyphen_      = false;
+        isPrevPunctuation_ = false;
+        if (lotusEngine_)
+            ResetEngine(lotusEngine_.handle());
+    }
+
+    bool LotusState::isEmptyHistory() const {
+        return !hasHistory_;
+    }
+
+    void LotusState::replayBufferedKeys() {
+        LOTUS_INFO("Starting replay buffered keys");
+        if (buffered_keys_.empty()) {
+            return;
+        }
+        auto keys = std::move(buffered_keys_);
+        buffered_keys_.clear();
+        for (size_t i = 0; i < keys.size(); ++i) {
+            auto        sym     = static_cast<KeySym>(keys[i].sym);
+            uint32_t    state   = keys[i].state;
+            std::string keyUtf8 = Key::keySymToUTF8(sym);
+            if (keyUtf8.empty()) {
+                continue;
+            }
+
+            bool processed = EngineProcessKeyEvent(lotusEngine_.handle(), sym, state) != 0U;
+
+            auto commitF = UniqueCPtr<char>(EnginePullCommit(lotusEngine_.handle()));
+            if (commitF && (*commitF.get() != 0)) {
+                std::string commitStr = commitF.get();
+                std::string deletedPart;
+                std::string addedPart;
+                compareAndSplitStrings(oldPreBuffer_, commitStr, deletedPart, addedPart);
+
+                if (!deletedPart.empty()) {
+                    // Re-buffer remaining keys for next replay cycle.
+                    for (size_t j = i + 1; j < keys.size(); ++j) {
+                        if (buffered_keys_.size() < MAX_BUFFERED_KEYS) {
+                            buffered_keys_.push_back(keys[j]);
+                        }
+                    }
+                    performReplacement(deletedPart, addedPart);
+                    hasHistory_ = false;
+                    ResetEngine(lotusEngine_.handle());
+                    oldPreBuffer_.clear();
+                    return;
+                }
+                if (!addedPart.empty()) {
+                    ic_->commitString(addedPart);
+                }
+
+                hasHistory_ = false;
+                ResetEngine(lotusEngine_.handle());
+                oldPreBuffer_.clear();
+                continue;
+            }
+
+            if (!processed) {
+                ic_->commitString(keyUtf8);
+                continue;
+            }
+
+            hasHistory_ = true;
+            realtextLen.fetch_add(1, std::memory_order_acq_rel);
+
+            UniqueCPtr<char> preeditC(EnginePullPreedit(lotusEngine_.handle()));
+            std::string      preeditStr = (preeditC && (*preeditC.get() != 0)) ? preeditC.get() : "";
+
+            std::string      deletedPart;
+            std::string      addedPart;
+            if (compareAndSplitStrings(oldPreBuffer_, preeditStr, deletedPart, addedPart) != 0) {
+                if (deletedPart.empty()) {
+                    if (!addedPart.empty()) {
+                        ic_->commitString(addedPart);
+                        oldPreBuffer_ = preeditStr;
+                    }
+                } else {
+                    if (uinput_client_fd_ < 0) {
+                        ic_->commitString(keyUtf8);
+                        continue;
+                    }
+
+                    if (is_deleting_.load()) {
+                        is_deleting_.store(false, std::memory_order_release);
+                    }
+
+                    // Re-buffer remaining keys for next replay cycle.
+                    for (size_t j = i + 1; j < keys.size(); ++j) {
+                        if (buffered_keys_.size() < MAX_BUFFERED_KEYS) {
+                            buffered_keys_.push_back(keys[j]);
+                        }
+                    }
+                    performReplacement(deletedPart, addedPart);
+                    oldPreBuffer_ = preeditStr;
+                    return;
+                }
+            }
+        }
+        LOTUS_INFO("Replay buffered keys done");
+    }
+
+    bool LotusState::isMacroSkipModifier(KeySym sym) const {
+        const auto trigger = engine_->config().macroSkipTriggerModifier.value();
+        switch (trigger) {
+            case MacroSkipTriggerModifier::Shift: return sym == FcitxKey_Shift_L || sym == FcitxKey_Shift_R;
+            case MacroSkipTriggerModifier::Ctrl: return sym == FcitxKey_Control_L || sym == FcitxKey_Control_R;
+            case MacroSkipTriggerModifier::Alt: return sym == FcitxKey_Alt_L || sym == FcitxKey_Alt_R;
+            case MacroSkipTriggerModifier::Disabled:
+            default: return false;
+        }
+    }
+
+    void LotusState::handleModifierTap(const KeyEvent& keyEvent) {
+        const auto trigger = engine_->config().macroSkipTriggerModifier.value();
+        if (trigger == MacroSkipTriggerModifier::Disabled || !*engine_->config().enableMacro) {
+            return;
+        }
+        if (!isMacroSkipModifier(keyEvent.rawKey().sym())) {
+            tracking_modifier_tap_ = false;
+            return;
+        }
+        if (keyEvent.isRelease()) {
+            if (tracking_modifier_tap_) {
+                tracking_modifier_tap_ = false;
+                macro_skip_            = true;
+                EngineSetMacroEnabled(lotusEngine_.handle(), 0);
+                LOTUS_INFO("Macro skip enabled for next word");
+            }
+        } else {
+            tracking_modifier_tap_ = true;
+        }
+    }
+
+    void LotusState::cancelModifierTap() {
+        tracking_modifier_tap_ = false;
+    }
+
+    void LotusState::reEnableMacroAfterWordEnd() {
+        if (!macro_skip_) {
+            return;
+        }
+        UniqueCPtr<char> preedit(EnginePullPreedit(lotusEngine_.handle()));
+        if (preedit && *preedit.get() != 0) {
+            return;
+        }
+        macro_skip_ = false;
+        EngineSetMacroEnabled(lotusEngine_.handle(), *engine_->config().enableMacro ? 1 : 0);
+    }
+
+    void LotusState::resetMacroSkip() {
+        tracking_modifier_tap_ = false;
+        macro_skip_            = false;
+        if (lotusEngine_) {
+            EngineSetMacroEnabled(lotusEngine_.handle(), *engine_->config().enableMacro ? 1 : 0);
+        }
+    }
+
+    KeySym LotusState::unshiftKeySym(KeySym sym) {
+        if (sym >= FcitxKey_A && sym <= FcitxKey_Z) {
+            return static_cast<KeySym>(sym + (FcitxKey_a - FcitxKey_A));
+        }
+        switch (sym) {
+            case FcitxKey_asciitilde: return FcitxKey_grave;
+            case FcitxKey_exclam: return FcitxKey_1;
+            case FcitxKey_at: return FcitxKey_2;
+            case FcitxKey_numbersign: return FcitxKey_3;
+            case FcitxKey_dollar: return FcitxKey_4;
+            case FcitxKey_percent: return FcitxKey_5;
+            case FcitxKey_asciicircum: return FcitxKey_6;
+            case FcitxKey_ampersand: return FcitxKey_7;
+            case FcitxKey_asterisk: return FcitxKey_8;
+            case FcitxKey_parenleft: return FcitxKey_9;
+            case FcitxKey_parenright: return FcitxKey_0;
+            case FcitxKey_underscore: return FcitxKey_minus;
+            case FcitxKey_plus: return FcitxKey_equal;
+            case FcitxKey_braceleft: return FcitxKey_bracketleft;
+            case FcitxKey_braceright: return FcitxKey_bracketright;
+            case FcitxKey_bar: return FcitxKey_backslash;
+            case FcitxKey_colon: return FcitxKey_semicolon;
+            case FcitxKey_quotedbl: return FcitxKey_apostrophe;
+            case FcitxKey_less: return FcitxKey_comma;
+            case FcitxKey_greater: return FcitxKey_period;
+            case FcitxKey_question: return FcitxKey_slash;
+            default: return sym;
+        }
+    }
+
+    void LotusState::updateLastCommitTime() {
+        last_commit_time_ = std::chrono::steady_clock::now();
+    }
+} // namespace fcitx
