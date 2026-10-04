@@ -1,4 +1,23 @@
+# Normalize project text across Windows and Linux.
 * text=auto eol=lf
-*.png binary
-*.jpg binary
-*.ico binary
+
+# Use language-aware hunk headers in local diffs.
+*.c diff=cpp
+*.cc diff=cpp
+*.cpp diff=cpp
+*.cxx diff=cpp
+*.h diff=cpp
+*.hpp diff=cpp
+*.go diff=golang
+*.py diff=python
+*.sh text eol=lf
+
+# Do not normalize binary images, documents, or compiled translations.
+*.gif binary -eol
+*.ico binary -eol
+*.jpeg binary -eol
+*.jpg binary -eol
+*.mo binary -eol
+*.pdf binary -eol
+*.png binary -eol
+*.webp binary -eol
