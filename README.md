@@ -42,7 +42,13 @@ sudo cmake --install build --component Uinput  # optional privileged helper
 
 Other distro package recipes are under `packaging/`. Arch recipe expects release archive and SHA-256 supplied through its documented makepkg variables; it does not download unverified source.
 
-### NixOS
+## Development and agents
+
+Developer requirements, source map, Linux harness and native smoke procedures: [docs/development.md](docs/development.md). Contribution process: [CONTRIBUTING.md](CONTRIBUTING.md).
+
+`AGENTS.md` and `CONTEXT.md` explain repository rules and shared vocabulary. Pinned Superpowers plus engine, Settings and packaging skills are project-local in `.agents/skills/`; no global agent setup is required.
+
+## NixOS
 
 `flake.nix` xuất package `packages.<system>.default` và module `nixosModules.default`. Thêm module vào cấu hình NixOS rồi đặt `programs.fcitx5-evkey.enable = true;`. Gói chính chỉ cài runtime. `programs.fcitx5-evkey.uinput.enable = true;` cài helper tùy chọn, account, systemd unit, kernel module và udev rules; module không tự khởi chạy service. Chỉ chạy `fcitx5-evkey-server@<UID>.service` khi phiên desktop của UID đó đang hoạt động.
 
@@ -53,3 +59,5 @@ Runtime component and distro main packages omit helper executable, account, udev
 ## License and attribution
 
 Project distributed under GPL-3.0-or-later; see `LICENSE`. Imported Fcitx5 Lotus and Bamboo sources retain upstream copyright and notices. `bamboo/bamboo-core` carries its own license. Do not remove attribution when redistributing.
+
+Agent-workflow licenses remain separate: upstream Superpowers skills include their MIT notice in `.agents/skills/SUPERPOWERS-LICENSE`; AutoSkills skill sources and licenses are documented in [.agents/skills/THIRD-PARTY-SOURCES.md](.agents/skills/THIRD-PARTY-SOURCES.md), not covered by this project's GPL license. `python-executor` sends arbitrary Python to an external service; do not send private project data to inference.sh without explicit user approval.

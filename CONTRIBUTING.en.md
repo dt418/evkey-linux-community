@@ -6,12 +6,13 @@ EVKey Linux Community is an independent community project based on Fcitx5 Lotus 
 
 ## Build and test
 
-See dependencies and build commands in [README.en.md](README.en.md). Use a separate build directory:
+See [README.en.md](README.en.md) for dependencies. The shared CMake, Go, Settings, and D-Bus harness lives in [docs/development.md](docs/development.md):
 
 ```sh
-cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=ON
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
+tools/dev.sh help
+tools/dev.sh check
+tools/dev.sh settings
+tools/dev.sh dbus
 ```
 
 Engine/helper changes require testing in a real Fcitx5 Linux session. Unit tests and successful builds do not replace direct typing checks. Do not expand helper privileges or grant keyboard-device read access without an approved security design.
@@ -19,9 +20,9 @@ Engine/helper changes require testing in a real Fcitx5 Linux session. Unit tests
 ## Changes
 
 - Keep scope small; support CMake 3.16, C++17, and Go 1.18.
-- Update docs and observable-behavior tests when contracts change.
-- Do not log tokens, typed content, or user-identifying data.
-- Do not add release, package-signing, or artifact-publishing workflows.
+- Use test-driven development for behavior changes: prove an existing behavior seam fails for the intended reason, make the smallest fix, rerun that test, then smoke the actual surface. Headless and mocked tests do not prove desktop/hardware compatibility.
+- Superpowers and project skills for engine, Settings, and packaging live in `.agents/skills/`; `skills-lock.json` pins upstream.
+- Do not add automatic release, package-signing, or artifact-publishing workflows.
 - State environment and commands run in pull requests; do not claim desktop verification unless performed.
 
 ## Bug reports

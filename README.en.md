@@ -42,7 +42,13 @@ sudo cmake --install build --component Uinput  # optional privileged helper
 
 Other distro package recipes are in `packaging/`. Arch recipe expects a release archive and SHA-256 supplied through its documented makepkg variables; it does not download unverified source.
 
-### NixOS
+## Development and agents
+
+Developer prerequisites, source map, Linux harness, and native smoke procedures: [docs/development.md](docs/development.md). Contribution workflow: [CONTRIBUTING.en.md](CONTRIBUTING.en.md).
+
+`AGENTS.md` and `CONTEXT.md` describe repository rules and shared vocabulary. Pinned Superpowers plus engine, Settings, and packaging skills are project-local under `.agents/skills/`; no global agent setup is required.
+
+## NixOS
 
 `flake.nix` exports `packages.<system>.default` and `nixosModules.default`. Import the module into your NixOS configuration and set `programs.fcitx5-evkey.enable = true;`. The main package installs runtime only. `programs.fcitx5-evkey.uinput.enable = true;` adds the optional helper output, account, systemd unit, kernel module, and udev rules; it does not start the service automatically. Start `fcitx5-evkey-server@<UID>.service` only while that UID has an active desktop session.
 
@@ -53,3 +59,5 @@ Runtime component and distro main packages omit helper executable, account, udev
 ## License and attribution
 
 Project distributed under GPL-3.0-or-later; see `LICENSE`. Imported Fcitx5 Lotus and Bamboo sources retain upstream copyright and notices. `bamboo/bamboo-core` carries its own license. Preserve attribution when redistributing.
+
+Agent-workflow licenses remain separate: upstream Superpowers skills include their MIT notice in `.agents/skills/SUPERPOWERS-LICENSE`; AutoSkills skill sources and licenses are documented in [.agents/skills/THIRD-PARTY-SOURCES.md](.agents/skills/THIRD-PARTY-SOURCES.md), not covered by this project's GPL license. `python-executor` sends arbitrary Python to an external service; do not send private project data to inference.sh without explicit user approval.

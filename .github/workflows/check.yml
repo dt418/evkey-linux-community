@@ -1,0 +1,34 @@
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Ubuntu 24.04 checks
+    runs-on: ubuntu-24.04
+    env:
+      PYTHON: /usr/bin/python3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install package and harness dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends devscripts equivs gettext python3-gi dbus-daemon
+          mk-build-deps --install --remove --tool 'sudo apt-get --yes --no-install-recommends' packaging/debian/control
+      - name: Run development harness
+        run: |
+          tools/dev.sh check
+          tools/dev.sh settings
+          tools/dev.sh dbus

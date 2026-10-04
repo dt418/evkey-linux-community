@@ -6,12 +6,13 @@ EVKey Linux Community là dự án cộng đồng độc lập dựa trên mã n
 
 ## Build và kiểm thử
 
-Xem dependencies và lệnh build tại [README.md](README.md). Dùng build directory riêng:
+Tham khảo dependencies tại [README.md](README.md); các bước CMake, Go, Settings và D-Bus có chung harness trong [docs/development.md](docs/development.md):
 
 ```sh
-cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=ON
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
+tools/dev.sh help
+tools/dev.sh check
+tools/dev.sh settings
+tools/dev.sh dbus
 ```
 
 Thay đổi engine/helper cần kiểm thử trong phiên Fcitx5 Linux thật. Test unit/build không thay thế kiểm tra nhập liệu trực tiếp. Không gửi thay đổi mở rộng quyền helper hoặc cấp quyền đọc thiết bị bàn phím nếu không có thiết kế bảo mật được duyệt.
@@ -19,9 +20,9 @@ Thay đổi engine/helper cần kiểm thử trong phiên Fcitx5 Linux thật. T
 ## Thay đổi
 
 - Giữ phạm vi nhỏ và tương thích với CMake 3.16, C++17, Go 1.18.
-- Cập nhật tài liệu và kiểm thử hành vi có thể quan sát khi hợp đồng thay đổi.
-- Không đưa token, dữ liệu gõ, hay thông tin nhận dạng người dùng vào log.
-- Không thêm workflow phát hành, ký gói, hoặc tự động xuất bản artifact.
+- Dùng test-driven development cho thay đổi hành vi: chứng minh test seam hiện có thất bại vì lỗi mục tiêu, sửa tối thiểu, chạy lại test rồi smoke bề mặt thật. Tài liệu và test mock không chứng minh tương thích desktop/hardware.
+- Skill Superpowers và ba skill chuyên biệt cho engine, Settings, packaging nằm trong `.agents/skills/`; pin upstream theo `skills-lock.json`.
+- Không thêm release, package-signing hoặc artifact-publishing workflow tự động.
 - Nêu rõ môi trường và lệnh đã chạy trong pull request; không khẳng định kiểm thử desktop nếu chưa chạy.
 
 ## Báo lỗi
