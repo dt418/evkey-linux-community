@@ -42,6 +42,94 @@ This does not change global agent settings. Review `skills-lock.json` and skill 
 
 AutoSkills itself is CC BY-NC 4.0 and is not bundled here. Its detected skill sources and applicable licenses are documented in `.agents/skills/THIRD-PARTY-SOURCES.md`; skill files are separate from the project license. `python-executor` is flagged by the registry for arbitrary Python execution, network-capable libraries, and broad `Bash(belt *)` access; it requires the external `inference.sh` CLI. Keep project code and data local. Never send source, config, credentials, test data, or user text to that service unless user explicitly authorizes that specific transfer.
 
+## Archify diagrams and Pages
+
+The checked-in static site lives in `site/`. Pages deploys only that directory after
+the artifact checker passes; production deployment does not install or run Archify,
+Node.js, Chrome, or Chromium.
+
+### Pinned generator and evidence
+
+The project-local Archify CLI is [tt-a1i/archify v3.0.1](https://github.com/tt-a1i/archify/releases/tag/v3.0.1), pinned to commit
+[`2ab3cae7ac2c2a55d7386ca789d03c4fcd31816c`](https://github.com/tt-a1i/archify/commit/2ab3cae7ac2c2a55d7386ca789d03c4fcd31816c).
+Its official release archive is
+[`archify.zip`](https://github.com/tt-a1i/archify/releases/download/v3.0.1/archify.zip)
+with SHA-256
+`b0b23bd28db314f04ca8ab9620fe20f8c1ac6474a3546bd8fe4679508aa1b7f5`.
+The local CLI is `.agents/skills/archify/bin/archify.mjs`; its mirrored skill,
+license, source notice, and lock entry remain project-local.
+
+Diagram evidence currently cites EVKey source snapshot
+[`87e6de6e59b96310876450a723e3b9ce5d613d41`](https://github.com/dt418/evkey-linux-community/tree/87e6de6e59b96310876450a723e3b9ce5d613d41).
+Do not describe a diagram as current for a changed behavior until a person has
+retraced that behavior against its source revision and revised its candidate evidence.
+
+`.archify/site-manifest.json` is authoritative for the four candidate, generated,
+and published paths and all three SHA-256 values per artifact. Do not copy hashes
+into this guide: refresh the manifest and checksum inventories together so one
+reviewable record remains authoritative.
+
+| Diagram | Candidate and generated output | Published copy |
+| --- | --- | --- |
+| English runtime architecture | `.archify/architecture-runtime-architecture-20261005-021646/candidate.json` → `.archify/architecture-runtime-architecture-20261005-021646/runtime-architecture.html` | `site/diagrams/en/runtime-architecture.html` |
+| Vietnamese runtime architecture | `.archify/architecture-runtime-architecture-20261005-022041/candidate.json` → `.archify/architecture-runtime-architecture-20261005-022041/runtime-architecture.html` | `site/diagrams/vi/runtime-architecture.html` |
+| English input modes | `.archify/workflow-input-modes-20261005-022107/candidate.json` → `.archify/workflow-input-modes-20261005-022107/input-modes.html` | `site/diagrams/en/input-modes.html` |
+| Vietnamese input modes | `.archify/workflow-input-modes-20261005-022242/candidate.json` → `.archify/workflow-input-modes-20261005-022242/input-modes.html` | `site/diagrams/vi/input-modes.html` |
+
+`.archify/SHA256SUMS` exactly inventories candidates and generated HTML;
+`site/diagrams/SHA256SUMS` exactly inventories public diagram HTML. The checker
+requires every manifest hash, both inventories, pinned provenance, and byte-for-byte
+generated-to-published copies to agree.
+
+### Regenerate reviewed diagrams
+
+Local regeneration requires Node.js 18 or newer plus installed Chrome or Chromium:
+the pinned CLI's `finalize` command runs validation, delivery, strict provenance,
+and real-browser checks. No browser path or browser installation belongs in this
+repository. Browser discovery uses `PATH` and platform defaults; if discovery is
+unsuitable, set `ARCHIFY_CHROME` only in the current shell to an installed browser
+executable, for example:
+
+```sh
+ARCHIFY_CHROME="$(command -v chromium)" \
+  ARCHIFY_UPDATE_CHECK_DISABLED=1 \
+  python3 tools/regenerate_archify_diagrams.py --root .
+```
+
+Use the matching executable name available on the workstation, such as
+`google-chrome`, `chromium`, or `chromium-browser`. Keep this configuration local;
+do not check in machine paths or install commands. `ARCHIFY_UPDATE_CHECK_DISABLED=1`
+keeps the approved pinned local CLI from performing its upstream update check during
+regeneration.
+
+From the repository root, first edit only candidates whose behavior has been
+human-retraced. Then regenerate and verify:
+
+```sh
+ARCHIFY_UPDATE_CHECK_DISABLED=1 python3 tools/regenerate_archify_diagrams.py --root .
+python3 tools/check_archify_artifacts.py --root .
+```
+
+Regeneration writes standalone HTML beside every candidate, copies each result
+byte-for-byte to its published `site/diagrams/` path, and rewrites the manifest plus
+both checksum inventories. It must not be used to silently keep diagrams based on
+stale source evidence.
+
+Before accepting an update, review candidate source links and line ranges against
+the pinned revision; inspect every changed diagram's semantics and generated HTML;
+and review the candidate, manifest, both checksum files, and published-copy diffs
+together. Confirm Vietnamese translations remain complete with exact placeholder
+tokens. The finalizer covers standalone diagram validation and browser evidence, not
+site navigation, embed layout, accessibility, repository-prefix routes, or mobile
+text alternatives; review those host-site concerns separately. For each generated
+diagram, inspect browser network activity and confirm its initial document makes no
+external requests; source and repository links remain user-triggered.
+
+For a relevant product-source behavior change, stop before regeneration until a
+human has retraced affected behavior, updated candidate evidence and the approved
+source snapshot as needed, regenerated every affected locale, refreshed both hash
+inventories, and reviewed all resulting semantic changes together.
+
 ## Harness
 
 ```text

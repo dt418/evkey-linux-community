@@ -32,3 +32,5 @@ jobs:
           tools/dev.sh check
           tools/dev.sh settings
           tools/dev.sh dbus
+      - name: Run Archify artifact tests
+        run: python3 -m unittest discover -s test -p 'test_archify_artifacts.py' -v
