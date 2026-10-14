@@ -32,5 +32,7 @@ jobs:
           tools/dev.sh check
           tools/dev.sh settings
           tools/dev.sh dbus
-      - name: Run Archify artifact tests
+      - name: Check contributor diagram provenance
+        run: python3 tools/check_archify_artifacts.py --root .
+      - name: Run contributor artifact tests
         run: python3 -m unittest discover -s test -p 'test_archify_artifacts.py' -v

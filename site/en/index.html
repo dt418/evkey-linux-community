@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="EVKey Linux Community — Vietnamese input for Fcitx5, based on Lotus and Bamboo.">
-  <title>EVKey Linux Community — Fcitx5 Field Guide</title>
+  <meta name="description" content="EVKey Linux Community — Vietnamese input for Fcitx5 on Linux.">
+  <title>Vietnamese input for Linux — EVKey Linux Community</title>
   <link rel="canonical" href="https://dt418.github.io/evkey-linux-community/en/">
   <link rel="alternate" hreflang="vi" href="https://dt418.github.io/evkey-linux-community/">
   <link rel="alternate" hreflang="en" href="https://dt418.github.io/evkey-linux-community/en/">
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="../assets/site.css">
 </head>
 <body>
@@ -17,10 +18,11 @@
       <p class="eyebrow">Fcitx5 · Linux · community</p>
       <a class="brand" href="./">EVKey Linux Community</a>
     </div>
-    <nav aria-label="Primary navigation">
+    <nav aria-label="Main navigation">
       <ul class="nav-list">
-        <li><a aria-current="page" href="./">Overview</a></li>
-        <li><a href="architecture/">Architecture</a></li>
+        <li><a href="#features">Features</a></li>
+        <li><a href="#guide">How to use</a></li>
+        <li><a href="#downloads">Downloads</a></li>
       </ul>
       <ul class="language-list" aria-label="Language">
         <li><a href="../" lang="vi">Tiếng Việt</a></li>
@@ -28,59 +30,60 @@
     </nav>
   </header>
 
-  <main id="content">
-    <section class="hero" aria-labelledby="page-title">
+  <main id="content" tabindex="-1">
+    <section class="hero" aria-labelledby="title">
       <div>
-        <p class="kicker">Input-method field guide</p>
-        <h1 id="page-title">Vietnamese, along Fcitx5's path.</h1>
-        <p>EVKey Linux Community is Vietnamese input for Linux, built on Fcitx5 Lotus and Bamboo. This independent community project is inspired by EVKey; it is not an official EVKey release and is not affiliated with, endorsed by, or distributed by EVKey's author.</p>
+        <p class="kicker">Vietnamese input on Linux</p>
+        <h1 id="title">Type Vietnamese through Fcitx5.</h1>
+        <p>EVKey Linux Community is an independent Vietnamese input method for Linux, based on Fcitx5 Lotus and Bamboo. It is inspired by EVKey; it is not the official EVKey release, and is neither affiliated with nor endorsed or distributed by EVKey’s author.</p>
         <div class="action-row">
-          <a class="button-link" href="architecture/">Read architecture maps</a>
-          <a class="button-link secondary" href="https://github.com/dt418/evkey-linux-community/tree/87e6de6e59b96310876450a723e3b9ce5d613d41">Browse source</a>
+          <a class="button-link" href="#guide">Get started</a>
+          <a class="button-link secondary" href="#downloads">Download source</a>
         </div>
       </div>
-      <aside class="hero-note" aria-label="Release status">
+      <aside class="hero-note" aria-label="Download status">
         <p class="meta-label">Release status</p>
-        <p>No binary package is published here. Build from source or inspect your distro recipe before using it.</p>
+        <p>No prebuilt binary packages are available yet. Download source and follow the build instructions.</p>
       </aside>
     </section>
 
     <div class="content-grid">
-      <section aria-labelledby="modes">
-        <div class="section-heading"><span class="section-number">01</span><h2 id="modes">Input modes</h2></div>
+      <section id="features" aria-labelledby="features-title">
+        <div class="section-heading"><span class="section-number">01</span><h2 id="features-title">Features</h2></div>
         <ul class="mode-list">
-          <li><strong>Preedit</strong>Shows the active composition before commit; no privileged helper is needed.</li>
-          <li><strong>Fake Backspace</strong>Replaces an engine-owned suffix through application-directed Backspace events and committed text; no privileged helper is used.</li>
-          <li><strong>Smooth / Uinput</strong>An optional mode using the helper's virtual keyboard for editing keys. Composed text still travels through Fcitx, not through the helper.</li>
+          <li><strong>Input methods</strong>Telex, VNI, Telex + VNI, Telex + VNI + VIQR, VIQR, Microsoft layout, VNI French keyboard and Custom.</li>
+          <li><strong>Output charsets</strong>Unicode and legacy Vietnamese encodings including TCVN3, VNI Windows, VIQR, VPS, VISCII and Windows 1258.</li>
+          <li><strong>Fcitx5 controls</strong>Choose Input Method and Charset, or open Settings from the status menu.</li>
         </ul>
-        <p class="note">Requested mode can differ from effective mode in each input context. Fallback depends on compatibility and helper availability; interrupted replacement is not blindly replayed.</p>
+        <p class="note">Choices reflect the engine’s supported options; some input methods or charsets serve legacy compatibility needs.</p>
       </section>
 
-      <section aria-labelledby="boundary">
-        <div class="section-heading"><span class="section-number">02</span><h2 id="boundary">Helper boundary</h2></div>
-        <p>Installing <code>fcitx5-evkey-uinput</code> and enabling its service are separate decisions. The optional helper receives bounded editing-key requests over AF_UNIX, checks peer UID plus active, local, unlocked session state, then may emit through <code>/dev/uinput</code>.</p>
-        <p>The helper does not receive composed text, does not read raw keyboard devices, and cannot promise an application will apply an edit. Review local distro, systemd, and udev policy before enabling it.</p>
-        <p><a href="architecture/">Read annotated runtime and fallback flows</a>.</p>
-      </section>
-
-      <section class="wide" aria-labelledby="build">
-        <div class="section-heading"><span class="section-number">03</span><h2 id="build">Build from source</h2></div>
-        <p>There is no generic download button. Full instructions, dependencies, and packaging recipes live in the repository at the linked snapshot.</p>
+      <section id="guide" aria-labelledby="guide-title">
+        <div class="section-heading"><span class="section-number">02</span><h2 id="guide-title">How to use</h2></div>
         <ol class="build-steps">
-          <li>Install Linux dependencies from the <a href="https://github.com/dt418/evkey-linux-community/blob/87e6de6e59b96310876450a723e3b9ce5d613d41/README.en.md#build">build instructions</a>.</li>
-          <li>Configure, build, and test in a source checkout.</li>
-          <li>Install the <code>Runtime</code> component separately; install <code>Uinput</code> only after evaluating the optional helper.</li>
+          <li>Install EVKey Linux Community with Fcitx5, then add EVKey Linux Community to Fcitx5’s input method list.</li>
+          <li>Use the Fcitx5 status menu → <strong>Input Method</strong> to choose Telex, VNI or another method.</li>
+          <li>Choose an output encoding from <strong>Charset</strong>. Open <strong>Settings</strong> to configure text display and replacement behavior.</li>
         </ol>
-        <pre><code>cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=ON
-cmake --build build --parallel
-sudo cmake --install build --component Runtime</code></pre>
-        <p class="callout">Contributions: read the <a href="https://github.com/dt418/evkey-linux-community/blob/87e6de6e59b96310876450a723e3b9ce5d613d41/CONTRIBUTING.en.md">contribution process</a> and inspect the <a href="https://github.com/dt418/evkey-linux-community/tree/87e6de6e59b96310876450a723e3b9ce5d613d41">pinned source snapshot</a>.</p>
+        <p>Telex example: <code>Tooi ddang gox tieengs Vieetj.</code> → <strong>Tôi đang gõ tiếng Việt.</strong> VNI: <code>tie61ng Vie65t</code> → <strong>tiếng Việt</strong>.</p>
+        <p class="callout"><strong>Choose an input mode:</strong> Preedit composes text separately before commit. Fake Backspace replaces a suffix using the application’s Backspace key and needs no helper. Optional Smooth/Uinput uses a separate helper for editing keys. The helper does not receive composed text or read raw keyboard input. Compatibility depends on the application; start with Preedit if unsure.</p>
+      </section>
+
+      <section class="wide" id="downloads" aria-labelledby="downloads-title">
+        <div class="section-heading"><span class="section-number">03</span><h2 id="downloads-title">Downloads and installation</h2></div>
+        <p>There are no packaged Linux binaries in Releases yet. Download the source ZIP to build locally; the README covers dependencies and installing the Runtime component.</p>
+        <div class="action-row">
+          <a class="button-link" href="https://github.com/dt418/evkey-linux-community/archive/refs/heads/main.zip">Download source ZIP</a>
+          <a class="button-link secondary" href="https://github.com/dt418/evkey-linux-community/blob/main/README.en.md#build">Build instructions</a>
+          <a class="button-link secondary" href="https://github.com/dt418/evkey-linux-community/releases">GitHub Releases</a>
+        </div>
+        <p class="note">Smooth/Uinput requires the optional <code>fcitx5-evkey-uinput</code> helper package. Installing the helper and enabling its service are separate choices. Preedit and Fake Backspace do not require it.</p>
       </section>
     </div>
   </main>
 
   <footer class="site-footer">
-    <p>EVKey Linux Community · Lotus/Bamboo source keeps its respective attribution and licenses · not official EVKey.</p>
+    <p>EVKey Linux Community · Independent community project, not official EVKey · GPL-3.0-or-later. <a href="https://github.com/dt418/evkey-linux-community/blob/main/CONTRIBUTING.md">Contributor information</a>.</p>
   </footer>
 </body>
 </html>

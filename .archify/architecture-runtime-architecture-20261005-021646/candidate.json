@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "EVKey Linux runtime architecture",
+    "locale": "en",
+    "output": ".archify/architecture-runtime-architecture-20261005-021646/runtime-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "git@github.com:dt418/evkey-linux-community.git",
+      "revision": "87e6de6e59b96310876450a723e3b9ce5d613d41",
+      "link_mode": "local-only"
+    }
+  },
+  "layout": {"mode": "grid", "origin": [40, 130], "cols": 4, "gapX": 80, "gapY": 150, "cellW": 180, "cellH": 90},
+  "components": [
+    {
+      "id": "application",
+      "row": 0,
+      "col": 0,
+      "size": [180, 90],
+      "type": "external",
+      "label": "Focused application",
+      "sublabel": "Fcitx input context",
+      "sources": [{"path": "src/lotus-engine.cpp", "line": 479, "end_line": 516, "label": "context activation"}]
+    },
+    {
+      "id": "engine",
+      "row": 0,
+      "col": 1,
+      "size": [180, 90],
+      "type": "backend",
+      "label": "EVKey Fcitx engine",
+      "sublabel": "mode, rules, per-context state",
+      "sources": [{"path": "src/lotus-engine.cpp", "line": 479, "end_line": 516, "label": "mode selection"}, {"path": "src/lotus-state.cpp", "line": 1206, "end_line": 1248, "label": "dispatch and fallback"}]
+    },
+    {
+      "id": "bamboo",
+      "row": 0,
+      "col": 2,
+      "size": [180, 90],
+      "type": "backend",
+      "label": "Bamboo engine",
+      "sublabel": "Go composition and Vietnamese transforms",
+      "sources": [{"path": "bamboo/bamboo-c.go", "line": 49, "end_line": 85, "label": "C bridge"}, {"path": "bamboo/bamboo-core/bamboo.go", "line": 59, "end_line": 94, "label": "core engine"}]
+    },
+    {
+      "id": "helper",
+      "row": 1,
+      "col": 2,
+      "size": [180, 90],
+      "type": "security",
+      "label": "Optional Uinput helper",
+      "sublabel": "session-gated key device",
+      "sources": [{"path": "server/lotus-server.cpp", "line": 172, "end_line": 182, "label": "logind session policy"}, {"path": "server/lotus-server.cpp", "line": 266, "end_line": 270, "label": "peer UID check"}, {"path": "server/lotus-server.cpp", "line": 313, "end_line": 335, "label": "uinput device"}]
+    },
+    {
+      "id": "document",
+      "row": 1,
+      "col": 1,
+      "size": [180, 90],
+      "type": "external",
+      "label": "Application document",
+      "sublabel": "preedit, commits, forwarded keys",
+      "sources": [{"path": "src/lotus-state.cpp", "line": 350, "end_line": 377, "label": "client preedit and commit"}, {"path": "src/lotus-state.cpp", "line": 865, "end_line": 933, "label": "Fake Backspace replacement"}]
+    },
+    {
+      "id": "settings",
+      "row": 1,
+      "col": 0,
+      "size": [180, 90],
+      "type": "frontend",
+      "label": "Settings UI",
+      "sublabel": "Fcitx D-Bus config and runtime status",
+      "sources": [{"path": "settings-gui/core/dbus_handler.py", "line": 55, "end_line": 57, "label": "controller interface"}, {"path": "settings-gui/core/dbus_handler.py", "line": 181, "end_line": 197, "label": "config and status reads"}]
+    }
+  ],
+  "connections": [
+    {"id": "keys", "from": "application", "to": "engine", "label": "key events", "variant": "emphasis", "labelDy": -50},
+    {"id": "composition", "from": "engine", "to": "bamboo", "label": "process key; pull preedit / commit", "labelAt": [520, 92]},
+    {"id": "edit", "from": "engine", "to": "document", "label": "Fcitx preedit / commit; Fake Backspace", "labelAt": [390, 270]},
+    {"id": "smooth", "from": "engine", "to": "helper", "label": "UID-checked local socket request", "variant": "security", "labelAt": [720, 270]},
+    {"id": "virtual-keys", "from": "helper", "to": "document", "label": "/dev/uinput edit key taps only", "variant": "security", "labelAt": [520, 485]},
+    {"id": "configuration", "from": "settings", "to": "engine", "label": "D-Bus config + status", "variant": "dashed", "labelAt": [260, 292]}
+  ],
+  "cards": [
+    {"dot": "cyan", "title": "One composition engine", "items": ["Bamboo creates preedit and commit text; Fcitx state chooses the delivery mode.", "Preedit and Fake Backspace edit through the focused Fcitx input context."]},
+    {"dot": "rose", "title": "Optional privileged boundary", "items": ["Smooth delegates virtual key injection to the helper.", "The helper requires an eligible local logind session and verifies peer UID."]},
+    {"dot": "emerald", "title": "Status scope", "items": ["Settings reads a non-persistent runtime snapshot for the most recent EVKey context.", "No claim that this snapshot proves compatibility for every application."]}
+  ]
+}

@@ -42,11 +42,12 @@ This does not change global agent settings. Review `skills-lock.json` and skill 
 
 AutoSkills itself is CC BY-NC 4.0 and is not bundled here. Its detected skill sources and applicable licenses are documented in `.agents/skills/THIRD-PARTY-SOURCES.md`; skill files are separate from the project license. `python-executor` is flagged by the registry for arbitrary Python execution, network-capable libraries, and broad `Bash(belt *)` access; it requires the external `inference.sh` CLI. Keep project code and data local. Never send source, config, credentials, test data, or user text to that service unless user explicitly authorizes that specific transfer.
 
-## Archify diagrams and Pages
+## Contributor-only Archify diagrams
 
-The checked-in static site lives in `site/`. Pages deploys only that directory after
-the artifact checker passes; production deployment does not install or run Archify,
-Node.js, Chrome, or Chromium.
+The GitHub Pages site in `site/` introduces the project for users. Archify diagrams
+are contributor references only: keep candidates and generated HTML under `.archify/`;
+never link them from Pages or include them in its artifact. Pages deploys only `site/`
+and does not install or run Archify, Node.js, Chrome, or Chromium.
 
 ### Pinned generator and evidence
 
@@ -59,36 +60,43 @@ with SHA-256
 The local CLI is `.agents/skills/archify/bin/archify.mjs`; its mirrored skill,
 license, source notice, and lock entry remain project-local.
 
-Diagram evidence currently cites EVKey source snapshot
+Diagram evidence cites EVKey source snapshot
 [`87e6de6e59b96310876450a723e3b9ce5d613d41`](https://github.com/dt418/evkey-linux-community/tree/87e6de6e59b96310876450a723e3b9ce5d613d41).
-Do not describe a diagram as current for a changed behavior until a person has
+Do not describe a diagram as current for changed behavior until a person has
 retraced that behavior against its source revision and revised its candidate evidence.
 
-`.archify/site-manifest.json` is authoritative for the four candidate, generated,
-and published paths and all three SHA-256 values per artifact. Do not copy hashes
-into this guide: refresh the manifest and checksum inventories together so one
-reviewable record remains authoritative.
+`.archify/diagram-manifest.json` is authoritative for the four candidate and generated
+paths and their hashes. `.archify/SHA256SUMS` inventories those files. The manifest
+contains no published-site paths; `site/diagrams/` is not used.
 
-| Diagram | Candidate and generated output | Published copy |
-| --- | --- | --- |
-| English runtime architecture | `.archify/architecture-runtime-architecture-20261005-021646/candidate.json` → `.archify/architecture-runtime-architecture-20261005-021646/runtime-architecture.html` | `site/diagrams/en/runtime-architecture.html` |
-| Vietnamese runtime architecture | `.archify/architecture-runtime-architecture-20261005-022041/candidate.json` → `.archify/architecture-runtime-architecture-20261005-022041/runtime-architecture.html` | `site/diagrams/vi/runtime-architecture.html` |
-| English input modes | `.archify/workflow-input-modes-20261005-022107/candidate.json` → `.archify/workflow-input-modes-20261005-022107/input-modes.html` | `site/diagrams/en/input-modes.html` |
-| Vietnamese input modes | `.archify/workflow-input-modes-20261005-022242/candidate.json` → `.archify/workflow-input-modes-20261005-022242/input-modes.html` | `site/diagrams/vi/input-modes.html` |
+| Diagram | Candidate → generated output |
+| --- | --- |
+| English runtime architecture | `.archify/architecture-runtime-architecture-20261005-021646/candidate.json` → `.archify/architecture-runtime-architecture-20261005-021646/runtime-architecture.html` |
+| Vietnamese runtime architecture | `.archify/architecture-runtime-architecture-20261005-022041/candidate.json` → `.archify/architecture-runtime-architecture-20261005-022041/runtime-architecture.html` |
+| English input modes | `.archify/workflow-input-modes-20261005-022107/candidate.json` → `.archify/workflow-input-modes-20261005-022107/input-modes.html` |
+| Vietnamese input modes | `.archify/workflow-input-modes-20261005-022242/candidate.json` → `.archify/workflow-input-modes-20261005-022242/input-modes.html` |
 
-`.archify/SHA256SUMS` exactly inventories candidates and generated HTML;
-`site/diagrams/SHA256SUMS` exactly inventories public diagram HTML. The checker
-requires every manifest hash, both inventories, pinned provenance, and byte-for-byte
-generated-to-published copies to agree.
+The checker requires exactly these locale/type pairs, contributor-only paths, pinned
+provenance, matching manifest hashes, and an exact `.archify/SHA256SUMS` inventory.
+The diagrams' bundled JetBrains Mono subset includes Vietnamese glyphs; viewer text
+uses local/system fonts. Initial diagram loads make no external font or script requests.
 
 ### Regenerate reviewed diagrams
 
-Local regeneration requires Node.js 18 or newer plus installed Chrome or Chromium:
-the pinned CLI's `finalize` command runs validation, delivery, strict provenance,
-and real-browser checks. No browser path or browser installation belongs in this
-repository. Browser discovery uses `PATH` and platform defaults; if discovery is
-unsuitable, set `ARCHIFY_CHROME` only in the current shell to an installed browser
-executable, for example:
+Local regeneration requires Node.js 18 or newer plus installed Chrome or Chromium.
+The pinned CLI's `finalize` command runs validation, delivery, strict provenance, and
+real-browser checks. Browser paths belong in the current shell only, never in source.
+For example, Windows Git Bash can pass an installed executable explicitly:
+
+```sh
+ARCHIFY_CHROME='C:/path/to/chrome.exe' ARCHIFY_UPDATE_CHECK_DISABLED=1 \
+  python tools/regenerate_archify_diagrams.py --root .
+```
+
+PowerShell can set the same two variables for the current session before running
+`python tools/regenerate_archify_diagrams.py --root .`; remove them with
+`Remove-Item Env:ARCHIFY_CHROME, Env:ARCHIFY_UPDATE_CHECK_DISABLED` afterward.
+On Linux, use the executable available on the workstation:
 
 ```sh
 ARCHIFY_CHROME="$(command -v chromium)" \
@@ -96,39 +104,35 @@ ARCHIFY_CHROME="$(command -v chromium)" \
   python3 tools/regenerate_archify_diagrams.py --root .
 ```
 
-Use the matching executable name available on the workstation, such as
-`google-chrome`, `chromium`, or `chromium-browser`. Keep this configuration local;
-do not check in machine paths or install commands. `ARCHIFY_UPDATE_CHECK_DISABLED=1`
-keeps the approved pinned local CLI from performing its upstream update check during
-regeneration.
+`ARCHIFY_UPDATE_CHECK_DISABLED=1` keeps the approved pinned local CLI from making an
+upstream update check during regeneration.
 
-From the repository root, first edit only candidates whose behavior has been
-human-retraced. Then regenerate and verify:
+First edit only candidates whose behavior has been human-retraced. Then regenerate
+and verify:
 
 ```sh
 ARCHIFY_UPDATE_CHECK_DISABLED=1 python3 tools/regenerate_archify_diagrams.py --root .
 python3 tools/check_archify_artifacts.py --root .
+python3 -m unittest discover -s test -p 'test_archify_artifacts.py' -v
 ```
 
-Regeneration writes standalone HTML beside every candidate, copies each result
-byte-for-byte to its published `site/diagrams/` path, and rewrites the manifest plus
-both checksum inventories. It must not be used to silently keep diagrams based on
-stale source evidence.
+Regeneration writes standalone HTML beside each candidate and refreshes only
+`.archify/diagram-manifest.json` and `.archify/SHA256SUMS`. It never copies artifacts
+into `site/`. Do not use it to silently preserve diagrams based on stale source evidence.
 
-Before accepting an update, review candidate source links and line ranges against
-the pinned revision; inspect every changed diagram's semantics and generated HTML;
-and review the candidate, manifest, both checksum files, and published-copy diffs
-together. Confirm Vietnamese translations remain complete with exact placeholder
-tokens. The finalizer covers standalone diagram validation and browser evidence, not
-site navigation, embed layout, accessibility, repository-prefix routes, or mobile
-text alternatives; review those host-site concerns separately. For each generated
-diagram, inspect browser network activity and confirm its initial document makes no
-external requests; source and repository links remain user-triggered.
+Before accepting an update, review candidate source links and line ranges against the
+pinned revision; inspect each changed diagram's semantics and generated HTML; and
+review candidate, manifest, and checksum diffs together. Confirm Vietnamese
+translations remain complete with exact placeholder tokens. The finalizer covers
+standalone diagram validation and browser evidence, not public-site navigation or
+accessibility. Inspect initial browser network activity; source and repository links
+remain user-triggered.
 
 For a relevant product-source behavior change, stop before regeneration until a
 human has retraced affected behavior, updated candidate evidence and the approved
-source snapshot as needed, regenerated every affected locale, refreshed both hash
-inventories, and reviewed all resulting semantic changes together.
+source snapshot as needed, regenerated affected locales, refreshed checksums, and
+reviewed all semantic changes together.
+
 
 ## Harness
 

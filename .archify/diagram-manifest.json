@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "archify_commit": "2ab3cae7ac2c2a55d7386ca789d03c4fcd31816c",
+  "source_revision": "87e6de6e59b96310876450a723e3b9ce5d613d41",
+  "artifacts": [
+    {
+      "type": "architecture",
+      "locale": "en",
+      "candidate": ".archify/architecture-runtime-architecture-20261005-021646/candidate.json",
+      "generated": ".archify/architecture-runtime-architecture-20261005-021646/runtime-architecture.html",
+      "candidate_sha256": "f63c4c06e1498543c2b12d666fe8cc4b1ebdab488eb5307d765cd99dd158b293",
+      "generated_sha256": "d35f353f8e8d4f49762611806dbec1cb4b6ce278a81563aedb4da93c0be9018d"
+    },
+    {
+      "type": "architecture",
+      "locale": "vi",
+      "candidate": ".archify/architecture-runtime-architecture-20261005-022041/candidate.json",
+      "generated": ".archify/architecture-runtime-architecture-20261005-022041/runtime-architecture.html",
+      "candidate_sha256": "901774f5c9ec49f94393fafa17017821d0f87ce6db3c988d431e5751f4ab58cd",
+      "generated_sha256": "33b611d4b8dbb81bc11e3be3d5b131e1407a34b7761dd3d68ecc525c7e23caac"
+    },
+    {
+      "type": "workflow",
+      "locale": "en",
+      "candidate": ".archify/workflow-input-modes-20261005-022107/candidate.json",
+      "generated": ".archify/workflow-input-modes-20261005-022107/input-modes.html",
+      "candidate_sha256": "209caed6fc3355450b151be957026486da17337254c4e7a7ea6445f9a888a395",
+      "generated_sha256": "6b387785b8466baa212e1ac18175efefb5777588edbad85308bbede8b26195b1"
+    },
+    {
+      "type": "workflow",
+      "locale": "vi",
+      "candidate": ".archify/workflow-input-modes-20261005-022242/candidate.json",
+      "generated": ".archify/workflow-input-modes-20261005-022242/input-modes.html",
+      "candidate_sha256": "0c8c7fad19a3a23eeb5d5c21ec7aa0bd4279163106d110c78925ba07375887f4",
+      "generated_sha256": "07b183f95802e68c4b80d2af73733539c003a870ddc6eabfa6f53d16d0fb862a"
+    }
+  ]
+}

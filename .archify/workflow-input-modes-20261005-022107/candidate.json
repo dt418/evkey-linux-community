@@ -1,0 +1,48 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Input modes and safe fallback",
+    "locale": "en",
+    "output": ".archify/workflow-input-modes-20261005-022107/input-modes.html",
+    "quality_profile": "showcase",
+    "repository": {"url": "git@github.com:dt418/evkey-linux-community.git", "revision": "87e6de6e59b96310876450a723e3b9ce5d613d41", "link_mode": "local-only"}
+  },
+  "lanes": [
+    {"id": "client", "label": "Focused app"},
+    {"id": "engine", "label": "Fcitx + Bamboo"},
+    {"id": "delivery", "label": "Text delivery"},
+    {"id": "helper", "label": "Optional helper"}
+  ],
+  "mainPath": ["key", "guard", "mode", "bamboo", "preedit"],
+  "nodes": [
+    {"id": "key", "lane": "client", "col": 0, "type": "external", "width": 120, "label": "Input key", "sublabel": "focused context", "sources": [{"path": "src/lotus-engine.cpp", "line": 479, "end_line": 516}]},
+    {"id": "passthrough", "lane": "client", "col": 1, "type": "external", "width": 125, "label": "Original key", "sublabel": "unchanged", "sources": [{"path": "src/lotus-state.cpp", "line": 1211, "end_line": 1215}]},
+    {"id": "guard", "lane": "engine", "col": 1, "type": "security", "width": 130, "label": "Sensitive guard", "sublabel": "sensitive: unchanged", "sources": [{"path": "src/lotus-state.cpp", "line": 1206, "end_line": 1215}]},
+    {"id": "mode", "lane": "engine", "col": 2, "type": "backend", "width": 120, "label": "Effective mode", "sublabel": "requested vs active", "sources": [{"path": "src/lotus-state.cpp", "line": 1217, "end_line": 1248}]},
+    {"id": "bamboo", "lane": "engine", "col": 3, "type": "backend", "width": 120, "label": "Bamboo", "sublabel": "Vietnamese transform", "sources": [{"path": "src/lotus-state.cpp", "line": 901, "end_line": 908}, {"path": "bamboo/bamboo-c.go", "line": 49, "end_line": 85}]},
+    {"id": "virtual-edit", "lane": "engine", "col": 4, "type": "backend", "width": 130, "label": "Fcitx commit", "sublabel": "replacement text only", "sources": [{"path": "src/lotus-state.cpp", "line": 735, "end_line": 801}]},
+    {"id": "fallback", "lane": "delivery", "col": 2, "type": "frontend", "width": 130, "label": "Preedit fallback", "sublabel": "Uinput choice retained", "sources": [{"path": "src/lotus-state.cpp", "line": 1231, "end_line": 1248}]},
+    {"id": "preedit", "lane": "delivery", "col": 3, "type": "frontend", "width": 120, "label": "Preedit", "sublabel": "underline / panel", "sources": [{"path": "src/lotus-state.cpp", "line": 350, "end_line": 377}]},
+    {"id": "fake", "lane": "delivery", "col": 4, "type": "backend", "width": 130, "label": "Fake Backspace", "sublabel": "Backspace + commit", "sources": [{"path": "src/lotus-state.cpp", "line": 865, "end_line": 933}]},
+    {"id": "smooth-check", "lane": "engine", "col": 2, "yOffset": 100, "type": "backend", "width": 120, "label": "Uinput ready?", "sublabel": "check for Smooth", "sources": [{"path": "src/lotus-engine.cpp", "line": 509, "end_line": 516}, {"path": "src/lotus-state.cpp", "line": 1231, "end_line": 1248}]},
+    {"id": "helper", "lane": "helper", "col": 4, "type": "security", "width": 135, "label": "Session helper", "sublabel": "UID + active unlocked session", "sources": [{"path": "server/lotus-server.cpp", "line": 172, "end_line": 182}, {"path": "server/lotus-server.cpp", "line": 266, "end_line": 270}, {"path": "server/lotus-server.cpp", "line": 313, "end_line": 335}]}
+  ],
+  "edges": [
+    {"id": "key-guard", "from": "key", "to": "guard", "label": "key + flags", "role": "main"},
+    {"id": "guard-dispatch", "from": "guard", "to": "mode", "label": "safe", "role": "main"},
+    {"id": "guard-forward", "from": "guard", "to": "passthrough", "label": "sensitive / disabled", "variant": "security", "role": "branch"},
+    {"id": "dispatch-bamboo", "from": "mode", "to": "bamboo", "label": "compose", "role": "main"},
+    {"id": "preedit-path", "from": "bamboo", "to": "preedit", "label": "Preedit", "variant": "emphasis", "role": "branch"},
+    {"id": "fake-path", "from": "bamboo", "to": "fake", "label": "Fake Backspace", "role": "branch"},
+    {"id": "smooth-probe", "from": "mode", "to": "smooth-check", "label": "Uinput requested", "role": "branch", "fromSide": "bottom", "toSide": "top"},
+    {"id": "smooth-ready", "from": "smooth-check", "to": "helper", "label": "ready session", "variant": "security", "role": "branch"},
+    {"id": "smooth-text", "from": "bamboo", "to": "virtual-edit", "label": "Fcitx replacement text", "role": "branch"},
+    {"id": "smooth-fallback", "from": "smooth-check", "to": "fallback", "label": "helper not ready", "variant": "dashed", "role": "error"},
+    {"id": "fallback-preedit", "from": "fallback", "to": "preedit", "label": "effective Preedit", "variant": "dashed", "role": "branch"}
+  ],
+  "cards": [
+    {"dot": "rose", "title": "Privacy gate", "items": ["PasswordOrSensitive and Disable are handled before text transformation; the original key passes through unchanged."]},
+    {"dot": "amber", "title": "Per-context fallback", "items": ["The requested Uinput mode stays configured; an unready context uses effective Preedit.", "Smooth separates channels: the helper emits Backspace/selection keys through /dev/uinput, while Fcitx commits replacement text. The helper does not send Unicode text."]}
+  ]
+}
