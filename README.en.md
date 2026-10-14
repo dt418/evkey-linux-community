@@ -4,6 +4,8 @@ Vietnamese input method for Fcitx5 on Linux, based on Fcitx5 Lotus and Bamboo so
 
 **This community edition is inspired by EVKey and uses Lotus/Bamboo; it is not the official EVKey release.** It is not affiliated with, endorsed by, or distributed by EVKey's author.
 
+Project site: <https://dt418.github.io/evkey-linux-community/en/>.
+
 ## Modes
 
 - **Preedit** — show composition before commit; no privileged helper.

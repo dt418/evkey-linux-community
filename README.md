@@ -4,6 +4,8 @@ Bộ gõ tiếng Việt cho Fcitx5 trên Linux, dựa trên mã nguồn Fcitx5 L
 
 **Bản cộng đồng lấy cảm hứng từ EVKey; sử dụng Lotus/Bamboo, không phải bản EVKey chính thức.** Không liên kết, xác nhận hoặc phân phối bởi tác giả EVKey.
 
+Trang web dự án: <https://dt418.github.io/evkey-linux-community/>.
+
 ## Chế độ
 
 - **Preedit** — hiển thị phần đang gõ trước khi commit; không cần helper đặc quyền.

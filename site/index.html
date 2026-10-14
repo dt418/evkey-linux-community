@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="EVKey Linux Community — bộ gõ tiếng Việt Fcitx5 dựa trên Lotus và Bamboo.">
+  <title>EVKey Linux Community — Sổ tay Fcitx5</title>
+  <link rel="canonical" href="https://dt418.github.io/evkey-linux-community/">
+  <link rel="alternate" hreflang="vi" href="https://dt418.github.io/evkey-linux-community/">
+  <link rel="alternate" hreflang="en" href="https://dt418.github.io/evkey-linux-community/en/">
+  <link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#noi-dung">Bỏ qua điều hướng</a>
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">Fcitx5 · Linux · cộng đồng</p>
+      <a class="brand" href="./">EVKey Linux Community</a>
+    </div>
+    <nav aria-label="Điều hướng chính">
+      <ul class="nav-list">
+        <li><a aria-current="page" href="./">Tổng quan</a></li>
+        <li><a href="architecture/">Kiến trúc</a></li>
+      </ul>
+      <ul class="language-list" aria-label="Ngôn ngữ">
+        <li><a href="en/" lang="en">English</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="noi-dung">
+    <section class="hero" aria-labelledby="tieu-de">
+      <div>
+        <p class="kicker">Sổ tay thực địa cho bộ gõ</p>
+        <h1 id="tieu-de">Tiếng Việt, trên đường đi của Fcitx5.</h1>
+        <p>EVKey Linux Community là bộ gõ tiếng Việt cho Linux, xây trên Fcitx5 Lotus và Bamboo. Dự án cộng đồng độc lập này lấy cảm hứng từ EVKey — không phải bản EVKey chính thức, không liên kết, không được tác giả EVKey xác nhận hay phân phối.</p>
+        <div class="action-row">
+          <a class="button-link" href="architecture/">Xem sơ đồ kiến trúc</a>
+          <a class="button-link secondary" href="https://github.com/dt418/evkey-linux-community/tree/87e6de6e59b96310876450a723e3b9ce5d613d41">Duyệt mã nguồn</a>
+        </div>
+      </div>
+      <aside class="hero-note" aria-label="Lưu ý phát hành">
+        <p class="meta-label">Tình trạng phát hành</p>
+        <p>Không có gói nhị phân được công bố tại đây. Hãy build từ mã nguồn hoặc dùng recipe của distro sau khi tự xem xét.</p>
+      </aside>
+    </section>
+
+    <div class="content-grid">
+      <section aria-labelledby="che-do">
+        <div class="section-heading"><span class="section-number">01</span><h2 id="che-do">Chế độ nhập</h2></div>
+        <ul class="mode-list">
+          <li><strong>Preedit</strong>Hiển thị phần đang soạn trước khi commit; không cần helper đặc quyền.</li>
+          <li><strong>Fake Backspace</strong>Thay thế hậu tố do engine sở hữu bằng sự kiện Backspace hướng tới ứng dụng và văn bản đã commit; không dùng helper đặc quyền.</li>
+          <li><strong>Smooth / Uinput</strong>Chế độ tùy chọn dùng bàn phím ảo của helper cho phím chỉnh sửa. Văn bản đã soạn vẫn đi qua Fcitx, không đi qua helper.</li>
+        </ul>
+        <p class="note">Chế độ được yêu cầu có thể khác chế độ hiệu lực trong từng input context. Fallback phụ thuộc khả năng tương thích và helper; thay thế bị gián đoạn không được tự phát lại mù quáng.</p>
+      </section>
+
+      <section aria-labelledby="ranh-gioi">
+        <div class="section-heading"><span class="section-number">02</span><h2 id="ranh-gioi">Ranh giới helper</h2></div>
+        <p>Gói <code>fcitx5-evkey-uinput</code> và việc bật service là hai quyết định riêng. Helper tùy chọn nhận yêu cầu phím chỉnh sửa có giới hạn qua AF_UNIX, kiểm tra peer UID cùng phiên local/đang hoạt động/đã mở khóa, rồi mới có thể xuất qua <code>/dev/uinput</code>.</p>
+        <p>Helper không nhận văn bản đã soạn, không đọc thiết bị bàn phím thô và không đảm bảo mọi ứng dụng sẽ áp dụng một chỉnh sửa. Xem chính sách distro, systemd và udev cục bộ trước khi bật.</p>
+        <p><a href="architecture/">Đọc luồng runtime và fallback có chú giải</a>.</p>
+      </section>
+
+      <section class="wide" aria-labelledby="build">
+        <div class="section-heading"><span class="section-number">03</span><h2 id="build">Build từ mã nguồn</h2></div>
+        <p>Không có nút tải xuống chung. Hướng dẫn đầy đủ, dependency và recipe đóng gói nằm trong repository tại snapshot được liên kết dưới đây.</p>
+        <ol class="build-steps">
+          <li>Cài dependency Linux theo <a href="https://github.com/dt418/evkey-linux-community/blob/87e6de6e59b96310876450a723e3b9ce5d613d41/README.md#build">hướng dẫn build</a>.</li>
+          <li>Configure, build và kiểm thử trong checkout mã nguồn.</li>
+          <li>Cài riêng thành phần <code>Runtime</code>; chỉ cài <code>Uinput</code> khi đã đánh giá helper tùy chọn.</li>
+        </ol>
+        <pre><code>cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=ON
+cmake --build build --parallel
+sudo cmake --install build --component Runtime</code></pre>
+        <p class="callout">Đóng góp: đọc <a href="https://github.com/dt418/evkey-linux-community/blob/87e6de6e59b96310876450a723e3b9ce5d613d41/CONTRIBUTING.md">quy trình đóng góp</a> và <a href="https://github.com/dt418/evkey-linux-community/tree/87e6de6e59b96310876450a723e3b9ce5d613d41">mã nguồn tại snapshot</a>.</p>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <p>EVKey Linux Community · Lotus/Bamboo nguồn được giữ attribution và license tương ứng · không phải EVKey chính thức.</p>
+  </footer>
+</body>
+</html>

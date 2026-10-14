@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="EVKey Linux Community — Vietnamese input for Fcitx5, based on Lotus and Bamboo.">
+  <title>EVKey Linux Community — Fcitx5 Field Guide</title>
+  <link rel="canonical" href="https://dt418.github.io/evkey-linux-community/en/">
+  <link rel="alternate" hreflang="vi" href="https://dt418.github.io/evkey-linux-community/">
+  <link rel="alternate" hreflang="en" href="https://dt418.github.io/evkey-linux-community/en/">
+  <link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip navigation</a>
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">Fcitx5 · Linux · community</p>
+      <a class="brand" href="./">EVKey Linux Community</a>
+    </div>
+    <nav aria-label="Primary navigation">
+      <ul class="nav-list">
+        <li><a aria-current="page" href="./">Overview</a></li>
+        <li><a href="architecture/">Architecture</a></li>
+      </ul>
+      <ul class="language-list" aria-label="Language">
+        <li><a href="../" lang="vi">Tiếng Việt</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="content">
+    <section class="hero" aria-labelledby="page-title">
+      <div>
+        <p class="kicker">Input-method field guide</p>
+        <h1 id="page-title">Vietnamese, along Fcitx5's path.</h1>
+        <p>EVKey Linux Community is Vietnamese input for Linux, built on Fcitx5 Lotus and Bamboo. This independent community project is inspired by EVKey; it is not an official EVKey release and is not affiliated with, endorsed by, or distributed by EVKey's author.</p>
+        <div class="action-row">
+          <a class="button-link" href="architecture/">Read architecture maps</a>
+          <a class="button-link secondary" href="https://github.com/dt418/evkey-linux-community/tree/87e6de6e59b96310876450a723e3b9ce5d613d41">Browse source</a>
+        </div>
+      </div>
+      <aside class="hero-note" aria-label="Release status">
+        <p class="meta-label">Release status</p>
+        <p>No binary package is published here. Build from source or inspect your distro recipe before using it.</p>
+      </aside>
+    </section>
+
+    <div class="content-grid">
+      <section aria-labelledby="modes">
+        <div class="section-heading"><span class="section-number">01</span><h2 id="modes">Input modes</h2></div>
+        <ul class="mode-list">
+          <li><strong>Preedit</strong>Shows the active composition before commit; no privileged helper is needed.</li>
+          <li><strong>Fake Backspace</strong>Replaces an engine-owned suffix through application-directed Backspace events and committed text; no privileged helper is used.</li>
+          <li><strong>Smooth / Uinput</strong>An optional mode using the helper's virtual keyboard for editing keys. Composed text still travels through Fcitx, not through the helper.</li>
+        </ul>
+        <p class="note">Requested mode can differ from effective mode in each input context. Fallback depends on compatibility and helper availability; interrupted replacement is not blindly replayed.</p>
+      </section>
+
+      <section aria-labelledby="boundary">
+        <div class="section-heading"><span class="section-number">02</span><h2 id="boundary">Helper boundary</h2></div>
+        <p>Installing <code>fcitx5-evkey-uinput</code> and enabling its service are separate decisions. The optional helper receives bounded editing-key requests over AF_UNIX, checks peer UID plus active, local, unlocked session state, then may emit through <code>/dev/uinput</code>.</p>
+        <p>The helper does not receive composed text, does not read raw keyboard devices, and cannot promise an application will apply an edit. Review local distro, systemd, and udev policy before enabling it.</p>
+        <p><a href="architecture/">Read annotated runtime and fallback flows</a>.</p>
+      </section>
+
+      <section class="wide" aria-labelledby="build">
+        <div class="section-heading"><span class="section-number">03</span><h2 id="build">Build from source</h2></div>
+        <p>There is no generic download button. Full instructions, dependencies, and packaging recipes live in the repository at the linked snapshot.</p>
+        <ol class="build-steps">
+          <li>Install Linux dependencies from the <a href="https://github.com/dt418/evkey-linux-community/blob/87e6de6e59b96310876450a723e3b9ce5d613d41/README.en.md#build">build instructions</a>.</li>
+          <li>Configure, build, and test in a source checkout.</li>
+          <li>Install the <code>Runtime</code> component separately; install <code>Uinput</code> only after evaluating the optional helper.</li>
+        </ol>
+        <pre><code>cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_TESTING=ON
+cmake --build build --parallel
+sudo cmake --install build --component Runtime</code></pre>
+        <p class="callout">Contributions: read the <a href="https://github.com/dt418/evkey-linux-community/blob/87e6de6e59b96310876450a723e3b9ce5d613d41/CONTRIBUTING.en.md">contribution process</a> and inspect the <a href="https://github.com/dt418/evkey-linux-community/tree/87e6de6e59b96310876450a723e3b9ce5d613d41">pinned source snapshot</a>.</p>
+      </section>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <p>EVKey Linux Community · Lotus/Bamboo source keeps its respective attribution and licenses · not official EVKey.</p>
+  </footer>
+</body>
+</html>
